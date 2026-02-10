@@ -14,6 +14,7 @@ use tokio::time::{sleep, Duration};
 use crate::config::AgentConfig;
 use crate::database::AgentDatabase;
 use crate::skills::{Skill, SkillContext, SkillEvent};
+use crate::tools::ToolRegistry;
 
 #[derive(Debug, Clone)]
 pub enum AgentVisualState {
@@ -57,6 +58,7 @@ impl Default for AgentState {
 
 pub struct Agent {
     skills: Arc<RwLock<Vec<Box<dyn Skill>>>>,
+    tool_registry: Arc<ToolRegistry>,
     config: Arc<RwLock<AgentConfig>>,
     state: Arc<RwLock<AgentState>>,
     event_tx: Sender<AgentEvent>,
@@ -69,6 +71,7 @@ pub struct Agent {
 impl Agent {
     pub fn new(
         skills: Vec<Box<dyn Skill>>,
+        tool_registry: Arc<ToolRegistry>,
         config: AgentConfig,
         event_tx: Sender<AgentEvent>,
     ) -> Self {
@@ -131,6 +134,7 @@ impl Agent {
 
         Self {
             skills: Arc::new(RwLock::new(skills)),
+            tool_registry,
             config: Arc::new(RwLock::new(config)),
             state: Arc::new(RwLock::new(AgentState::default())),
             event_tx,

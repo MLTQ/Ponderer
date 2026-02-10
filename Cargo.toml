@@ -49,6 +49,9 @@ uuid = { version = "1.0", features = ["v4"] }
 # Async trait support for skills
 async-trait = "0.1"
 
+# Lightweight regex for safety checks (no proc macros)
+regex-lite = "0.1"
+
 [[bin]]
 name = "ponderer"
 path = "src/main.rs"

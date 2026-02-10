@@ -6,6 +6,7 @@ mod config;
 mod database;
 mod llm_client;
 mod skills;
+mod tools;
 mod ui;
 
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use agent::Agent;
 use config::AgentConfig;
 use database::AgentDatabase;
 use skills::Skill;
+use tools::ToolRegistry;
 use ui::app::AgentApp;
 
 fn main() {
@@ -55,6 +57,10 @@ fn main() {
 
     tracing::info!("Loaded {} skill(s)", skill_list.len());
 
+    // Create tool registry (tools will be registered by the agent or added later)
+    let tool_registry = Arc::new(ToolRegistry::new());
+    tracing::info!("Tool registry initialized");
+
     // Create event channel
     let (event_tx, event_rx) = flume::unbounded();
 
@@ -68,7 +74,7 @@ fn main() {
     };
 
     // Create agent
-    let agent = Arc::new(Agent::new(skill_list, config.clone(), event_tx));
+    let agent = Arc::new(Agent::new(skill_list, tool_registry, config.clone(), event_tx));
 
     // Spawn agent loop in background
     let agent_clone = agent.clone();
