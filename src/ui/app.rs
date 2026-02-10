@@ -2,13 +2,13 @@ use eframe::egui;
 use flume::Receiver;
 use std::sync::Arc;
 
+use super::avatar::AvatarSet;
+use super::character::CharacterPanel;
+use super::comfy_settings::ComfySettingsPanel;
+use super::settings::SettingsPanel;
 use crate::agent::{Agent, AgentEvent, AgentVisualState};
 use crate::config::AgentConfig;
 use crate::database::{AgentDatabase, ChatMessage};
-use super::settings::SettingsPanel;
-use super::character::CharacterPanel;
-use super::comfy_settings::ComfySettingsPanel;
-use super::avatar::AvatarSet;
 
 pub struct AgentApp {
     events: Vec<AgentEvent>,
@@ -158,7 +158,11 @@ impl eframe::App for AgentApp {
                     }
 
                     // Toggle chat panel button
-                    let chat_btn_text = if self.show_chat_panel { "📋 Activity" } else { "💬 Chat" };
+                    let chat_btn_text = if self.show_chat_panel {
+                        "📋 Activity"
+                    } else {
+                        "💬 Chat"
+                    };
                     if ui.button(chat_btn_text).clicked() {
                         self.show_chat_panel = !self.show_chat_panel;
                         if self.show_chat_panel {
@@ -184,7 +188,8 @@ impl eframe::App for AgentApp {
                 ui.label("💬");
                 let response = ui.text_edit_singleline(&mut self.user_input);
 
-                let enter_pressed = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let enter_pressed =
+                    response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let send_clicked = ui.button("Send").clicked();
 
                 if (enter_pressed || send_clicked) && !self.user_input.trim().is_empty() {
@@ -234,7 +239,10 @@ impl eframe::App for AgentApp {
         }
 
         // Render ComfyUI workflow panel
-        if self.comfy_settings_panel.render(ctx, &mut self.settings_panel.config) {
+        if self
+            .comfy_settings_panel
+            .render(ctx, &mut self.settings_panel.config)
+        {
             // User saved workflow settings
             if let Err(e) = self.settings_panel.config.save() {
                 tracing::error!("Failed to save config: {}", e);

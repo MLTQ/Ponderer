@@ -76,8 +76,8 @@ impl ComfyWorkflow {
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read workflow JSON from {:?}", path.as_ref()))?;
 
-        let workflow_json: serde_json::Value = serde_json::from_str(&contents)
-            .context("Failed to parse workflow JSON")?;
+        let workflow_json: serde_json::Value =
+            serde_json::from_str(&contents).context("Failed to parse workflow JSON")?;
 
         Self::from_workflow_json(workflow_json)
     }
@@ -100,7 +100,10 @@ impl ComfyWorkflow {
     }
 
     /// Prepare workflow for execution with agent-provided inputs
-    pub fn prepare_for_execution(&self, inputs: &HashMap<String, serde_json::Value>) -> Result<serde_json::Value> {
+    pub fn prepare_for_execution(
+        &self,
+        inputs: &HashMap<String, serde_json::Value>,
+    ) -> Result<serde_json::Value> {
         let mut workflow = self.workflow_json.clone();
 
         // Apply user/agent inputs to controllable nodes
@@ -155,8 +158,10 @@ fn extract_comfy_workflow_from_png(png_bytes: &[u8]) -> Result<serde_json::Value
                 // ComfyUI stores workflow in "workflow" or "prompt" chunks
                 if keyword == "workflow" || keyword == "prompt" {
                     let text_data = &chunk_data[null_pos + 1..];
-                    workflow_json = Some(String::from_utf8(text_data.to_vec())
-                        .context("Workflow data is not valid UTF-8")?);
+                    workflow_json = Some(
+                        String::from_utf8(text_data.to_vec())
+                            .context("Workflow data is not valid UTF-8")?,
+                    );
                     break;
                 }
             }
@@ -168,12 +173,13 @@ fn extract_comfy_workflow_from_png(png_bytes: &[u8]) -> Result<serde_json::Value
     let json_str = workflow_json
         .ok_or_else(|| anyhow::anyhow!("No ComfyUI workflow found in PNG metadata"))?;
 
-    serde_json::from_str(&json_str)
-        .context("Failed to parse workflow JSON from PNG")
+    serde_json::from_str(&json_str).context("Failed to parse workflow JSON from PNG")
 }
 
 /// Auto-detect controllable nodes in workflow
-fn detect_controllable_nodes(workflow: &serde_json::Value) -> Result<HashMap<String, ControllableNode>> {
+fn detect_controllable_nodes(
+    workflow: &serde_json::Value,
+) -> Result<HashMap<String, ControllableNode>> {
     let mut controllable = HashMap::new();
 
     if let Some(nodes) = workflow.as_object() {

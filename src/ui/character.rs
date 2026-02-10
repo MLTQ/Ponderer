@@ -1,5 +1,5 @@
-use eframe::egui;
 use crate::config::AgentConfig;
+use eframe::egui;
 use std::path::PathBuf;
 
 pub struct CharacterPanel {
@@ -52,8 +52,13 @@ impl CharacterPanel {
                                     let rgba = img.to_rgba8();
                                     let size = [rgba.width() as usize, rgba.height() as usize];
                                     let pixels = rgba.into_raw();
-                                    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                                    let texture = ctx.load_texture("character_avatar", color_image, Default::default());
+                                    let color_image =
+                                        egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                                    let texture = ctx.load_texture(
+                                        "character_avatar",
+                                        color_image,
+                                        Default::default(),
+                                    );
                                     ui.image((texture.id(), egui::vec2(128.0, 128.0)));
                                     self.avatar_texture = Some(texture);
                                 }
@@ -205,7 +210,10 @@ impl CharacterPanel {
                 // Clear texture to force reload
                 self.avatar_texture = None;
 
-                tracing::info!("Successfully imported character card: {}", self.config.character_name);
+                tracing::info!(
+                    "Successfully imported character card: {}",
+                    self.config.character_name
+                );
             }
             Err(e) => {
                 self.import_error = Some(format!("Failed to parse character card: {}", e));
@@ -223,7 +231,8 @@ impl CharacterPanel {
                 self.config.character_name
             ));
         } else {
-            parts.push("You are a helpful AI agent participating in forum discussions.".to_string());
+            parts
+                .push("You are a helpful AI agent participating in forum discussions.".to_string());
         }
 
         if !self.config.character_description.is_empty() {
@@ -231,7 +240,10 @@ impl CharacterPanel {
         }
 
         if !self.config.character_personality.is_empty() {
-            parts.push(format!("Your personality: {}", self.config.character_personality));
+            parts.push(format!(
+                "Your personality: {}",
+                self.config.character_personality
+            ));
         }
 
         if !self.config.character_scenario.is_empty() {

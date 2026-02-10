@@ -61,7 +61,10 @@ pub fn detect_leaks(text: &str) -> SafetyVerdict {
         ("ghp_[a-zA-Z0-9]{36}", "GitHub personal access token"),
         ("gho_[a-zA-Z0-9]{36}", "GitHub OAuth token"),
         ("glpat-[a-zA-Z0-9\\-]{20,}", "GitLab personal access token"),
-        ("-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----", "Private key"),
+        (
+            "-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----",
+            "Private key",
+        ),
         ("AKIA[0-9A-Z]{16}", "AWS access key"),
         ("eyJ[a-zA-Z0-9_-]{10,}\\.eyJ[a-zA-Z0-9_-]{10,}", "JWT token"),
     ];
@@ -113,7 +116,11 @@ pub fn check_output(tool_name: &str, output: &str) -> Result<String, String> {
     // 1. Leak detection
     match detect_leaks(output) {
         SafetyVerdict::Block(reason) => {
-            tracing::warn!("Safety blocked output from tool '{}': {}", tool_name, reason);
+            tracing::warn!(
+                "Safety blocked output from tool '{}': {}",
+                tool_name,
+                reason
+            );
             return Err(reason);
         }
         SafetyVerdict::Warn(reason) => {
@@ -132,12 +139,8 @@ pub fn check_output(tool_name: &str, output: &str) -> Result<String, String> {
 
 fn json_depth(value: &Value) -> usize {
     match value {
-        Value::Object(map) => {
-            1 + map.values().map(json_depth).max().unwrap_or(0)
-        }
-        Value::Array(arr) => {
-            1 + arr.iter().map(json_depth).max().unwrap_or(0)
-        }
+        Value::Object(map) => 1 + map.values().map(json_depth).max().unwrap_or(0),
+        Value::Array(arr) => 1 + arr.iter().map(json_depth).max().unwrap_or(0),
         _ => 1,
     }
 }

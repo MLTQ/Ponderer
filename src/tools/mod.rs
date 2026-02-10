@@ -58,7 +58,9 @@ impl ToolOutput {
     pub fn to_llm_string(&self) -> String {
         match self {
             ToolOutput::Text(s) => s.clone(),
-            ToolOutput::Json(v) => serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()),
+            ToolOutput::Json(v) => {
+                serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
+            }
             ToolOutput::Error(e) => format!("[ERROR] {}", e),
             ToolOutput::NeedsApproval { tool, reason, .. } => {
                 format!("[NEEDS APPROVAL] Tool '{}': {}", tool, reason)
@@ -177,7 +179,11 @@ impl ToolRegistry {
     /// Register a tool. Overwrites any existing tool with the same name.
     pub async fn register(&self, tool: Arc<dyn Tool>) {
         let name = tool.name().to_string();
-        tracing::info!("Registered tool: {} (category: {:?})", name, tool.category());
+        tracing::info!(
+            "Registered tool: {} (category: {:?})",
+            name,
+            tool.category()
+        );
         self.tools.write().await.insert(name, tool);
     }
 
@@ -219,11 +225,7 @@ impl ToolRegistry {
     ///
     /// Returns `ToolOutput::NeedsApproval` if the tool requires approval
     /// and the context indicates autonomous mode.
-    pub async fn execute_call(
-        &self,
-        call: &ToolCall,
-        ctx: &ToolContext,
-    ) -> ToolCallResult {
+    pub async fn execute_call(&self, call: &ToolCall, ctx: &ToolContext) -> ToolCallResult {
         let tool = match self.get(&call.name).await {
             Some(t) => t,
             None => {
@@ -241,10 +243,7 @@ impl ToolRegistry {
                 output: ToolOutput::NeedsApproval {
                     tool: call.name.clone(),
                     params: call.arguments.clone(),
-                    reason: format!(
-                        "Tool '{}' requires approval in autonomous mode",
-                        call.name
-                    ),
+                    reason: format!("Tool '{}' requires approval in autonomous mode", call.name),
                 },
             };
         }
@@ -311,10 +310,12 @@ mod tests {
             })
         }
 
-        async fn execute(&self, params: serde_json::Value, _ctx: &ToolContext) -> Result<ToolOutput> {
-            let message = params["message"]
-                .as_str()
-                .unwrap_or("(no message)");
+        async fn execute(
+            &self,
+            params: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput> {
+            let message = params["message"].as_str().unwrap_or("(no message)");
             Ok(ToolOutput::Text(message.to_string()))
         }
     }
@@ -338,7 +339,11 @@ mod tests {
             })
         }
 
-        async fn execute(&self, _params: serde_json::Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput> {
             Ok(ToolOutput::Text("executed".to_string()))
         }
 

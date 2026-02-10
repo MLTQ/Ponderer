@@ -15,7 +15,12 @@ pub struct ReasoningEngine {
 }
 
 impl ReasoningEngine {
-    pub fn new(api_url: String, model: String, api_key: Option<String>, system_prompt: String) -> Self {
+    pub fn new(
+        api_url: String,
+        model: String,
+        api_key: Option<String>,
+        system_prompt: String,
+    ) -> Self {
         Self {
             client: Client::new(),
             api_url,
@@ -36,7 +41,13 @@ impl ReasoningEngine {
         let mut context = String::new();
         context.push_str("Recent activity:\n\n");
         for (i, event) in events.iter().enumerate().take(10) {
-            let SkillEvent::NewContent { ref id, ref source, ref author, ref body, .. } = event;
+            let SkillEvent::NewContent {
+                ref id,
+                ref source,
+                ref author,
+                ref body,
+                ..
+            } = event;
             context.push_str(&format!(
                 "{}. Source: \"{}\"\n   From {}: {}\n   Event ID: {}\n\n",
                 i + 1,
@@ -142,7 +153,13 @@ impl ReasoningEngine {
 
         context.push_str("## Recent Activity\n\n");
         for (i, event) in events.iter().enumerate().take(10) {
-            let SkillEvent::NewContent { ref id, ref source, ref author, ref body, .. } = event;
+            let SkillEvent::NewContent {
+                ref id,
+                ref source,
+                ref author,
+                ref body,
+                ..
+            } = event;
             context.push_str(&format!(
                 "{}. Source: \"{}\"\n   From {}: {}\n   Event ID: {}\n\n",
                 i + 1,
@@ -172,7 +189,11 @@ impl ReasoningEngine {
     }
 
     /// Process private chat messages from the operator
-    pub async fn process_chat(&self, messages: &[crate::database::ChatMessage], working_memory_context: &str) -> Result<Decision> {
+    pub async fn process_chat(
+        &self,
+        messages: &[crate::database::ChatMessage],
+        working_memory_context: &str,
+    ) -> Result<Decision> {
         if messages.is_empty() {
             return Ok(Decision::NoAction {
                 reasoning: vec!["No chat messages to process".to_string()],
@@ -215,7 +236,11 @@ impl ReasoningEngine {
 
         let reasoning: Vec<String> = json_response["reasoning"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         match action {
@@ -225,18 +250,13 @@ impl ReasoningEngine {
                     .context("Missing content in chat reply")?
                     .to_string();
 
-                let memory_update = json_response["memory_update"]
-                    .as_array()
-                    .and_then(|arr| {
-                        if arr.len() >= 2 {
-                            Some((
-                                arr[0].as_str()?.to_string(),
-                                arr[1].as_str()?.to_string(),
-                            ))
-                        } else {
-                            None
-                        }
-                    });
+                let memory_update = json_response["memory_update"].as_array().and_then(|arr| {
+                    if arr.len() >= 2 {
+                        Some((arr[0].as_str()?.to_string(), arr[1].as_str()?.to_string()))
+                    } else {
+                        None
+                    }
+                });
 
                 Ok(Decision::ChatReply {
                     content,
@@ -265,16 +285,14 @@ impl ReasoningEngine {
         };
 
         // Try to parse as JSON
-        let json_response: serde_json::Value = serde_json::from_str(&cleaned_json)
-            .with_context(|| {
+        let json_response: serde_json::Value =
+            serde_json::from_str(&cleaned_json).with_context(|| {
                 tracing::error!("Failed to parse extracted JSON");
                 tracing::error!("Extracted JSON was:\n{}", cleaned_json);
                 format!("Failed to parse LLM decision as JSON: {}", cleaned_json)
             })?;
 
-        let action = json_response["action"]
-            .as_str()
-            .unwrap_or("none");
+        let action = json_response["action"].as_str().unwrap_or("none");
 
         let reasoning: Vec<String> = json_response["reasoning"]
             .as_array()
@@ -294,7 +312,12 @@ impl ReasoningEngine {
                     .as_str()
                     .with_context(|| {
                         tracing::error!("Missing 'post_id' field in reply decision");
-                        tracing::error!("Available fields: {:?}", json_response.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                        tracing::error!(
+                            "Available fields: {:?}",
+                            json_response
+                                .as_object()
+                                .map(|o| o.keys().collect::<Vec<_>>())
+                        );
                         "Missing post_id in reply decision"
                     })?
                     .to_string();
@@ -303,12 +326,21 @@ impl ReasoningEngine {
                     .as_str()
                     .with_context(|| {
                         tracing::error!("Missing 'content' field in reply decision");
-                        tracing::error!("Available fields: {:?}", json_response.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                        tracing::error!(
+                            "Available fields: {:?}",
+                            json_response
+                                .as_object()
+                                .map(|o| o.keys().collect::<Vec<_>>())
+                        );
                         "Missing content in reply decision"
                     })?
                     .to_string();
 
-                tracing::info!("Decision: Reply to event {} with content: {}", &post_id[..8.min(post_id.len())], &content[..50.min(content.len())]);
+                tracing::info!(
+                    "Decision: Reply to event {} with content: {}",
+                    &post_id[..8.min(post_id.len())],
+                    &content[..50.min(content.len())]
+                );
 
                 Ok(Decision::Reply {
                     post_id,
@@ -327,7 +359,11 @@ impl ReasoningEngine {
                     .with_context(|| "Missing content in update_memory decision")?
                     .to_string();
 
-                tracing::info!("Decision: Update working memory key '{}': {}", key, &content[..50.min(content.len())]);
+                tracing::info!(
+                    "Decision: Update working memory key '{}': {}",
+                    key,
+                    &content[..50.min(content.len())]
+                );
 
                 Ok(Decision::UpdateMemory {
                     key,
@@ -393,7 +429,9 @@ fn extract_json(response: &str) -> Result<String> {
     // Check if response looks truncated (no JSON delimiters at all)
     if !text.contains('{') && !text.contains('[') {
         tracing::error!("Response appears to contain no JSON at all - may be truncated");
-        tracing::error!("Consider increasing max_tokens or using a model with better instruction following");
+        tracing::error!(
+            "Consider increasing max_tokens or using a model with better instruction following"
+        );
     }
 
     anyhow::bail!("Could not extract valid JSON from LLM response")
@@ -688,7 +726,8 @@ That should work!"#;
 
     #[test]
     fn test_extract_json_with_smart_quotes() {
-        let input = r#"{"action": "reply", "content": "Here's a test", "post_id": "123", "reasoning": []}"#;
+        let input =
+            r#"{"action": "reply", "content": "Here's a test", "post_id": "123", "reasoning": []}"#;
 
         let result = extract_json(input).unwrap();
         assert!(serde_json::from_str::<serde_json::Value>(&result).is_ok());
@@ -703,7 +742,8 @@ That should work!"#;
 
     #[test]
     fn test_nested_braces() {
-        let input = r#"{"action": "reply", "metadata": {"nested": "value"}, "reasoning": ["test"]}"#;
+        let input =
+            r#"{"action": "reply", "metadata": {"nested": "value"}, "reasoning": ["test"]}"#;
 
         let result = extract_json(input).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();

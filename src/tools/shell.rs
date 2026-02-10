@@ -73,7 +73,12 @@ impl Tool for ShellTool {
             .unwrap_or(DEFAULT_TIMEOUT_SECS)
             .min(MAX_TIMEOUT_SECS);
 
-        tracing::info!("ShellTool executing: {} (cwd: {}, timeout: {}s)", command, working_dir, timeout_secs);
+        tracing::info!(
+            "ShellTool executing: {} (cwd: {}, timeout: {}s)",
+            command,
+            working_dir,
+            timeout_secs
+        );
 
         // Execute command
         let result = tokio::time::timeout(
@@ -119,15 +124,14 @@ impl Tool for ShellTool {
                     Ok(ToolOutput::Text(result_text))
                 }
             }
-            Ok(Err(e)) => {
-                Ok(ToolOutput::Error(format!("Failed to execute command: {}", e)))
-            }
-            Err(_) => {
-                Ok(ToolOutput::Error(format!(
-                    "Command timed out after {} seconds",
-                    timeout_secs
-                )))
-            }
+            Ok(Err(e)) => Ok(ToolOutput::Error(format!(
+                "Failed to execute command: {}",
+                e
+            ))),
+            Err(_) => Ok(ToolOutput::Error(format!(
+                "Command timed out after {} seconds",
+                timeout_secs
+            ))),
         }
     }
 
@@ -206,6 +210,9 @@ mod tests {
         let tool = ShellTool::new();
         let schema = tool.parameters_schema();
         assert!(schema["properties"]["command"].is_object());
-        assert!(schema["required"].as_array().unwrap().contains(&serde_json::json!("command")));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("command")));
     }
 }

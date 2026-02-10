@@ -1,8 +1,8 @@
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use anyhow::{Context, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RespondTo {
@@ -126,6 +126,18 @@ pub struct AgentConfig {
     // Polling and Response
     #[serde(default = "default_poll_interval", alias = "check_interval_seconds")]
     pub poll_interval_secs: u64,
+    #[serde(default)]
+    pub enable_heartbeat: bool,
+    #[serde(default = "default_heartbeat_interval_mins")]
+    pub heartbeat_interval_mins: u64,
+    #[serde(default = "default_heartbeat_checklist_path")]
+    pub heartbeat_checklist_path: String,
+    #[serde(default)]
+    pub enable_memory_evolution: bool,
+    #[serde(default = "default_memory_evolution_interval_hours")]
+    pub memory_evolution_interval_hours: u64,
+    #[serde(default)]
+    pub memory_eval_trace_set_path: Option<String>,
 
     #[serde(default)]
     pub respond_to: RespondTo,
@@ -176,11 +188,11 @@ pub struct AgentConfig {
 
     // Animated avatars for UI (local display only, not transmitted)
     #[serde(default)]
-    pub avatar_idle: Option<String>,      // Path to idle avatar (PNG/JPG/GIF)
+    pub avatar_idle: Option<String>, // Path to idle avatar (PNG/JPG/GIF)
     #[serde(default)]
-    pub avatar_thinking: Option<String>,  // Path to thinking avatar
+    pub avatar_thinking: Option<String>, // Path to thinking avatar
     #[serde(default)]
-    pub avatar_active: Option<String>,    // Path to active/working avatar
+    pub avatar_active: Option<String>, // Path to active/working avatar
 
     // Legacy fields for backward compatibility
     #[serde(default)]
@@ -210,7 +222,8 @@ fn default_username() -> String {
 fn default_system_prompt() -> String {
     "You are a thoughtful AI companion. \
      You engage in meaningful conversations, help with tasks, and grow through your interactions. \
-     Only respond when you have something valuable to contribute.".to_string()
+     Only respond when you have something valuable to contribute."
+        .to_string()
 }
 
 fn default_poll_interval() -> u64 {
@@ -218,6 +231,18 @@ fn default_poll_interval() -> u64 {
 }
 
 fn default_reflection_interval() -> u64 {
+    24
+}
+
+fn default_heartbeat_interval_mins() -> u64 {
+    30
+}
+
+fn default_heartbeat_checklist_path() -> String {
+    "HEARTBEAT.md".to_string()
+}
+
+fn default_memory_evolution_interval_hours() -> u64 {
     24
 }
 
@@ -239,6 +264,12 @@ impl Default for AgentConfig {
             username: default_username(),
             system_prompt: default_system_prompt(),
             poll_interval_secs: default_poll_interval(),
+            enable_heartbeat: false,
+            heartbeat_interval_mins: default_heartbeat_interval_mins(),
+            heartbeat_checklist_path: default_heartbeat_checklist_path(),
+            enable_memory_evolution: false,
+            memory_evolution_interval_hours: default_memory_evolution_interval_hours(),
+            memory_eval_trace_set_path: None,
             respond_to: RespondTo::default(),
             enable_self_reflection: false,
             reflection_interval_hours: default_reflection_interval(),
@@ -272,11 +303,10 @@ impl AgentConfig {
     /// Get the directory containing the executable
     fn get_base_dir() -> PathBuf {
         match std::env::current_exe() {
-            Ok(exe_path) => {
-                exe_path.parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from("."))
-            }
+            Ok(exe_path) => exe_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from(".")),
             Err(_) => PathBuf::from("."),
         }
     }
@@ -325,8 +355,7 @@ impl AgentConfig {
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path();
 
-        let toml_string = toml::to_string_pretty(self)
-            .context("Failed to serialize config")?;
+        let toml_string = toml::to_string_pretty(self).context("Failed to serialize config")?;
 
         fs::write(&path, toml_string)
             .with_context(|| format!("Failed to write config to {:?}", path))?;
@@ -358,6 +387,44 @@ impl AgentConfig {
         if let Ok(interval) = env::var("AGENT_CHECK_INTERVAL") {
             if let Ok(seconds) = interval.parse() {
                 config.poll_interval_secs = seconds;
+            }
+        }
+
+        if let Ok(enabled) = env::var("AGENT_ENABLE_HEARTBEAT") {
+            let enabled = enabled.eq_ignore_ascii_case("1")
+                || enabled.eq_ignore_ascii_case("true")
+                || enabled.eq_ignore_ascii_case("yes");
+            config.enable_heartbeat = enabled;
+        }
+
+        if let Ok(interval) = env::var("AGENT_HEARTBEAT_INTERVAL_MINS") {
+            if let Ok(minutes) = interval.parse() {
+                config.heartbeat_interval_mins = minutes;
+            }
+        }
+
+        if let Ok(path) = env::var("AGENT_HEARTBEAT_CHECKLIST_PATH") {
+            if !path.trim().is_empty() {
+                config.heartbeat_checklist_path = path;
+            }
+        }
+
+        if let Ok(enabled) = env::var("AGENT_ENABLE_MEMORY_EVOLUTION") {
+            let enabled = enabled.eq_ignore_ascii_case("1")
+                || enabled.eq_ignore_ascii_case("true")
+                || enabled.eq_ignore_ascii_case("yes");
+            config.enable_memory_evolution = enabled;
+        }
+
+        if let Ok(interval) = env::var("AGENT_MEMORY_EVOLUTION_INTERVAL_HOURS") {
+            if let Ok(hours) = interval.parse() {
+                config.memory_evolution_interval_hours = hours;
+            }
+        }
+
+        if let Ok(path) = env::var("AGENT_MEMORY_TRACE_SET_PATH") {
+            if !path.trim().is_empty() {
+                config.memory_eval_trace_set_path = Some(path);
             }
         }
 

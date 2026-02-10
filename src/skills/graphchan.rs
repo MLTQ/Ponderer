@@ -150,7 +150,10 @@ impl GraphchanSkill {
 
     pub async fn health_check(&self) -> Result<()> {
         let url = format!("{}/threads", self.base_url);
-        self.client.get(&url).send().await
+        self.client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to connect to Graphchan API")?;
         Ok(())
     }
@@ -183,23 +186,29 @@ impl Skill for GraphchanSkill {
     async fn poll(&self, ctx: &SkillContext) -> Result<Vec<SkillEvent>> {
         let recent = self.get_recent_posts(20).await?;
 
-        let events: Vec<SkillEvent> = recent.posts.into_iter()
+        let events: Vec<SkillEvent> = recent
+            .posts
+            .into_iter()
             .filter(|post_view| {
                 // Filter out agent's own posts
-                let is_agent_post = post_view.post.metadata.as_ref()
+                let is_agent_post = post_view
+                    .post
+                    .metadata
+                    .as_ref()
                     .and_then(|m| m.agent.as_ref())
                     .map(|a| a.name == ctx.username)
                     .unwrap_or(false);
                 !is_agent_post
             })
-            .map(|post_view| {
-                SkillEvent::NewContent {
-                    id: post_view.post.id.clone(),
-                    source: post_view.thread_title,
-                    author: post_view.post.author_peer_id.unwrap_or_else(|| "Anonymous".to_string()),
-                    body: post_view.post.body,
-                    parent_ids: post_view.post.parent_post_ids,
-                }
+            .map(|post_view| SkillEvent::NewContent {
+                id: post_view.post.id.clone(),
+                source: post_view.thread_title,
+                author: post_view
+                    .post
+                    .author_peer_id
+                    .unwrap_or_else(|| "Anonymous".to_string()),
+                body: post_view.post.body,
+                parent_ids: post_view.post.parent_post_ids,
             })
             .collect();
 
@@ -209,14 +218,10 @@ impl Skill for GraphchanSkill {
     async fn execute(&self, action: &str, params: &serde_json::Value) -> Result<SkillResult> {
         match action {
             "reply" => {
-                let thread_id = params["thread_id"].as_str()
-                    .context("Missing thread_id")?;
-                let post_id = params["post_id"].as_str()
-                    .context("Missing post_id")?;
-                let content = params["content"].as_str()
-                    .context("Missing content")?;
-                let username = params["username"].as_str()
-                    .unwrap_or("Ponderer");
+                let thread_id = params["thread_id"].as_str().context("Missing thread_id")?;
+                let post_id = params["post_id"].as_str().context("Missing post_id")?;
+                let content = params["content"].as_str().context("Missing content")?;
+                let username = params["username"].as_str().unwrap_or("Ponderer");
 
                 let metadata = Some(PostMetadata {
                     agent: Some(AgentInfo {
@@ -241,7 +246,8 @@ impl Skill for GraphchanSkill {
             }
             "list_threads" => {
                 let threads = self.list_threads().await?;
-                let summary: Vec<String> = threads.iter()
+                let summary: Vec<String> = threads
+                    .iter()
                     .take(10)
                     .map(|t| format!("{}: {}", t.id, t.title))
                     .collect();
@@ -260,7 +266,9 @@ impl Skill for GraphchanSkill {
             SkillActionDef {
                 name: "reply".to_string(),
                 description: "Reply to a forum post".to_string(),
-                params_description: "{\"thread_id\": \"...\", \"post_id\": \"...\", \"content\": \"...\"}".to_string(),
+                params_description:
+                    "{\"thread_id\": \"...\", \"post_id\": \"...\", \"content\": \"...\"}"
+                        .to_string(),
             },
             SkillActionDef {
                 name: "list_threads".to_string(),

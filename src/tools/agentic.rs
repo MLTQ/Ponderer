@@ -184,10 +184,7 @@ impl AgenticLoop {
             // Check if LLM returned tool calls
             if let Some(ref tool_calls) = llm_response.tool_calls {
                 if !tool_calls.is_empty() {
-                    tracing::debug!(
-                        "LLM requested {} tool call(s)",
-                        tool_calls.len()
-                    );
+                    tracing::debug!("LLM requested {} tool call(s)", tool_calls.len());
 
                     // Add assistant message with tool calls to history
                     messages.push(llm_response.clone());
@@ -196,10 +193,7 @@ impl AgenticLoop {
                     for tc in tool_calls {
                         let arguments: serde_json::Value =
                             serde_json::from_str(&tc.function.arguments).unwrap_or_else(|e| {
-                                tracing::warn!(
-                                    "Failed to parse tool arguments as JSON: {}",
-                                    e
-                                );
+                                tracing::warn!("Failed to parse tool arguments as JSON: {}", e);
                                 serde_json::json!({})
                             });
 
@@ -224,7 +218,11 @@ impl AgenticLoop {
                                 continue;
                             }
                             safety::SafetyVerdict::Warn(reason) => {
-                                tracing::warn!("Safety warning for {}: {}", tc.function.name, reason);
+                                tracing::warn!(
+                                    "Safety warning for {}: {}",
+                                    tc.function.name,
+                                    reason
+                                );
                             }
                             safety::SafetyVerdict::Allow => {}
                         }
@@ -280,10 +278,7 @@ impl AgenticLoop {
 
             // No tool calls — LLM produced final text response
             let response_text = llm_response.content.clone();
-            tracing::debug!(
-                "Agentic loop completed in {} iteration(s)",
-                iterations
-            );
+            tracing::debug!("Agentic loop completed in {} iteration(s)", iterations);
 
             return Ok(AgenticResult {
                 response: response_text,
@@ -295,11 +290,7 @@ impl AgenticLoop {
     }
 
     /// Call the LLM with the current messages and tool definitions.
-    async fn call_llm(
-        &self,
-        messages: &[Message],
-        tool_defs: &[ToolDef],
-    ) -> Result<Message> {
+    async fn call_llm(&self, messages: &[Message], tool_defs: &[ToolDef]) -> Result<Message> {
         let url = format!("{}/chat/completions", self.config.api_url);
 
         let mut body = serde_json::json!({
@@ -328,8 +319,10 @@ impl AgenticLoop {
             anyhow::bail!("LLM API error {}: {}", status, body);
         }
 
-        let response_json: serde_json::Value =
-            response.json().await.context("Failed to parse LLM response")?;
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .context("Failed to parse LLM response")?;
 
         // Extract the assistant message from the response
         let choice = response_json["choices"]

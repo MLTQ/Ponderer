@@ -75,15 +75,15 @@ impl LlmClient {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let response = req
-            .send()
-            .await
-            .context("Failed to send LLM request")?;
+        let response = req.send().await.context("Failed to send LLM request")?;
 
         // Check for HTTP errors and include response body for debugging
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_else(|_| "Unable to read body".to_string());
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read body".to_string());
             anyhow::bail!("LLM API returned error {}: {}", status, body);
         }
 
@@ -141,8 +141,10 @@ impl LlmClient {
                     &response
                 };
 
-                serde_json::from_str::<T>(json_content)
-                    .context(format!("Failed to parse JSON response. Raw response: {}", response))
+                serde_json::from_str::<T>(json_content).context(format!(
+                    "Failed to parse JSON response. Raw response: {}",
+                    response
+                ))
             }
         }
     }
@@ -184,7 +186,9 @@ impl LlmClient {
         ];
 
         // For vision models, we need to send image data
-        let response = self.generate_vision_with_image(messages, &image_base64).await?;
+        let response = self
+            .generate_vision_with_image(messages, &image_base64)
+            .await?;
 
         self.parse_json::<ImageEvaluation>(&response)
     }
@@ -198,11 +202,7 @@ impl LlmClient {
 
         let mut messages = messages;
         if let Some(last_msg) = messages.last_mut() {
-            last_msg.content = format!(
-                "[IMAGE_BASE64: {}]\n\n{}",
-                image_base64,
-                last_msg.content
-            );
+            last_msg.content = format!("[IMAGE_BASE64: {}]\n\n{}", image_base64, last_msg.content);
         }
 
         let request = ChatCompletionRequest {
@@ -222,7 +222,10 @@ impl LlmClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_else(|_| "Unable to read body".to_string());
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read body".to_string());
             anyhow::bail!("Vision API returned error {}: {}", status, body);
         }
 
@@ -277,12 +280,11 @@ impl LlmClient {
             cleaned
         };
 
-        serde_json::from_str::<T>(json_content.trim())
-            .context(format!(
-                "Failed to parse JSON. Extracted: {} | Original: {}",
-                json_content,
-                response.chars().take(500).collect::<String>()
-            ))
+        serde_json::from_str::<T>(json_content.trim()).context(format!(
+            "Failed to parse JSON. Extracted: {} | Original: {}",
+            json_content,
+            response.chars().take(500).collect::<String>()
+        ))
     }
 }
 

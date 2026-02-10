@@ -1,6 +1,6 @@
-use eframe::egui;
 use crate::comfy_workflow::{ComfyWorkflow, ControllableInput, InputType};
 use crate::config::AgentConfig;
+use eframe::egui;
 use std::path::PathBuf;
 
 pub struct ComfySettingsPanel {
@@ -86,8 +86,13 @@ impl ComfySettingsPanel {
                                     let rgba = img.to_rgba8();
                                     let size = [rgba.width() as usize, rgba.height() as usize];
                                     let pixels = rgba.into_raw();
-                                    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                                    let texture = ctx.load_texture("workflow_preview", color_image, Default::default());
+                                    let color_image =
+                                        egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                                    let texture = ctx.load_texture(
+                                        "workflow_preview",
+                                        color_image,
+                                        Default::default(),
+                                    );
                                     ui.image((texture.id(), egui::vec2(128.0, 128.0)));
                                     self.workflow_texture = Some(texture);
                                 }
@@ -96,7 +101,10 @@ impl ComfySettingsPanel {
                             ui.vertical(|ui| {
                                 ui.label(format!("Name: {}", workflow.name));
                                 ui.label(format!("Output Node: {}", workflow.output_node_id));
-                                ui.label(format!("Controllable Nodes: {}", workflow.controllable_nodes.len()));
+                                ui.label(format!(
+                                    "Controllable Nodes: {}",
+                                    workflow.controllable_nodes.len()
+                                ));
                             });
                         });
 
@@ -128,7 +136,8 @@ impl ComfySettingsPanel {
                                                     } else {
                                                         text.to_string()
                                                     };
-                                                    ui.label(format!("\"{}\"", short)).on_hover_text(text);
+                                                    ui.label(format!("\"{}\"", short))
+                                                        .on_hover_text(text);
                                                 }
                                             }
                                             InputType::Int | InputType::Seed => {
@@ -148,13 +157,18 @@ impl ComfySettingsPanel {
                                             }
                                         }
 
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if input.agent_modifiable {
-                                                ui.label("✓ Agent can modify").on_hover_text(&input.description);
-                                            } else {
-                                                ui.label("🔒 Fixed").on_hover_text(&input.description);
-                                            }
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if input.agent_modifiable {
+                                                    ui.label("✓ Agent can modify")
+                                                        .on_hover_text(&input.description);
+                                                } else {
+                                                    ui.label("🔒 Fixed")
+                                                        .on_hover_text(&input.description);
+                                                }
+                                            },
+                                        );
                                     });
                                 }
                             });
@@ -229,7 +243,8 @@ impl ComfySettingsPanel {
 
         match crate::comfy_workflow::ComfyWorkflow::from_png(&path) {
             Ok(mut workflow) => {
-                workflow.name = path.file_stem()
+                workflow.name = path
+                    .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("Imported Workflow")
                     .to_string();
@@ -251,7 +266,8 @@ impl ComfySettingsPanel {
 
         match crate::comfy_workflow::ComfyWorkflow::from_json_file(&path) {
             Ok(mut workflow) => {
-                workflow.name = path.file_stem()
+                workflow.name = path
+                    .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("Imported Workflow")
                     .to_string();
@@ -280,7 +296,10 @@ impl ComfySettingsPanel {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         match runtime.block_on(client.test_connection()) {
             Ok(_) => {
-                self.test_status = Some(format!("✅ Connected to ComfyUI at {}", config.comfyui.api_url));
+                self.test_status = Some(format!(
+                    "✅ Connected to ComfyUI at {}",
+                    config.comfyui.api_url
+                ));
             }
             Err(e) => {
                 self.test_status = Some(format!("❌ Failed to connect: {}", e));

@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use base64::Engine;
 
 /// TavernAI Character Card V2 format
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,11 +94,11 @@ pub fn parse_png_character_card<P: AsRef<Path>>(path: P) -> Result<(ParsedCharac
         .context("Failed to find 'chara' tEXt chunk in PNG")?;
 
     // Decode base64
-    let decoded = base64::engine::general_purpose::STANDARD.decode(&json_data)
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(&json_data)
         .context("Failed to decode base64 character data")?;
 
-    let json_str = String::from_utf8(decoded)
-        .context("Character data is not valid UTF-8")?;
+    let json_str = String::from_utf8(decoded).context("Character data is not valid UTF-8")?;
 
     // Parse as TavernAI V2
     let parsed = parse_tavernai_v2(&json_str)?;
@@ -133,8 +133,7 @@ fn extract_png_text_chunk(png_bytes: &[u8], keyword: &str) -> Result<String> {
 
             // tEXt chunk format: keyword\0text
             if let Some(null_pos) = chunk_data.iter().position(|&b| b == 0) {
-                let chunk_keyword = std::str::from_utf8(&chunk_data[0..null_pos])
-                    .unwrap_or("");
+                let chunk_keyword = std::str::from_utf8(&chunk_data[0..null_pos]).unwrap_or("");
 
                 if chunk_keyword == keyword {
                     let text_data = &chunk_data[null_pos + 1..];
@@ -153,8 +152,8 @@ fn extract_png_text_chunk(png_bytes: &[u8], keyword: &str) -> Result<String> {
 
 /// Parse TavernAI V2 format
 fn parse_tavernai_v2(content: &str) -> Result<ParsedCharacter> {
-    let card: TavernAICardV2 = serde_json::from_str(content)
-        .context("Failed to parse as TavernAI V2 JSON")?;
+    let card: TavernAICardV2 =
+        serde_json::from_str(content).context("Failed to parse as TavernAI V2 JSON")?;
 
     Ok(ParsedCharacter {
         name: card.data.name,

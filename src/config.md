@@ -1,12 +1,12 @@
 # config.rs
 
 ## Purpose
-Defines all configuration for the Ponderer agent, including LLM connection, identity, polling behavior, image generation (ComfyUI), character card fields, and self-reflection settings. Supports loading from TOML files with environment variable fallback.
+Defines all configuration for the Ponderer agent, including LLM connection, identity, polling behavior, autonomous heartbeat scheduling, image generation (ComfyUI), character card fields, and self-reflection settings. Supports loading from TOML files with environment variable fallback.
 
 ## Components
 
 ### `AgentConfig`
-- **Does**: Top-level config struct holding all runtime settings (LLM, Graphchan, identity, reflection, image gen, character, avatars)
+- **Does**: Top-level config struct holding all runtime settings (LLM, Graphchan, identity, heartbeat, reflection, image gen, character, avatars)
 - **Interacts with**: `main.rs` (loaded at startup), `agent::Agent` (drives behavior), `ui::app::AgentApp` (display/edit)
 
 ### `AgentConfig::load()`
@@ -18,7 +18,7 @@ Defines all configuration for the Ponderer agent, including LLM connection, iden
 - **Interacts with**: UI settings panel for persisting changes
 
 ### `AgentConfig::from_env()`
-- **Does**: Populates config from environment variables (`GRAPHCHAN_API_URL`, `LLM_API_URL`, `LLM_MODEL`, `LLM_API_KEY`, `AGENT_CHECK_INTERVAL`, `AGENT_NAME`)
+- **Does**: Populates config from environment variables (`GRAPHCHAN_API_URL`, `LLM_API_URL`, `LLM_MODEL`, `LLM_API_KEY`, `AGENT_CHECK_INTERVAL`, `AGENT_ENABLE_HEARTBEAT`, `AGENT_HEARTBEAT_INTERVAL_MINS`, `AGENT_HEARTBEAT_CHECKLIST_PATH`, `AGENT_ENABLE_MEMORY_EVOLUTION`, `AGENT_MEMORY_EVOLUTION_INTERVAL_HOURS`, `AGENT_MEMORY_TRACE_SET_PATH`, `AGENT_NAME`)
 - **Rationale**: Legacy support for env-var-only configuration
 
 ### `ComfyUIConfig`
@@ -34,11 +34,13 @@ Defines all configuration for the Ponderer agent, including LLM connection, iden
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
 | `main.rs` | `AgentConfig::load()` returns valid config | Changing `load()` return type |
-| `agent::Agent` | Fields: `llm_api_url`, `llm_model`, `llm_api_key`, `system_prompt`, `poll_interval_secs`, `enable_self_reflection`, `enable_image_generation`, `guiding_principles` | Renaming/removing any of these fields |
+| `agent::Agent` | Fields: `llm_api_url`, `llm_model`, `llm_api_key`, `system_prompt`, `poll_interval_secs`, `enable_heartbeat`, `heartbeat_interval_mins`, `heartbeat_checklist_path`, `enable_memory_evolution`, `memory_evolution_interval_hours`, `memory_eval_trace_set_path`, `enable_self_reflection`, `enable_image_generation`, `guiding_principles` | Renaming/removing any of these fields |
 | `comfy_client.rs` | `comfyui.api_url` is a valid HTTP URL | Changing `ComfyUIConfig` structure |
 | TOML file | Serde field names and aliases (`agent_name` -> `username`, `check_interval_seconds` -> `poll_interval_secs`) | Removing serde aliases breaks existing config files |
 
 ## Notes
 - Config path resolution uses `current_exe().parent()`, so the config file must sit next to the binary.
 - Default LLM is `llama3.2` at `localhost:11434` (Ollama).
+- Heartbeat defaults: disabled, 30-minute interval, checklist path `HEARTBEAT.md`.
+- Memory evolution defaults: disabled, 24-hour interval, built-in replay trace set.
 - Default Graphchan URL derives from `GRAPHCHAN_PORT` env var if set.

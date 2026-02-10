@@ -86,7 +86,11 @@ impl TrajectoryEngine {
     }
 
     /// Build a prompt that presents persona history for trajectory inference
-    fn build_trajectory_prompt(&self, history: &[PersonaSnapshot], principles: &[String]) -> String {
+    fn build_trajectory_prompt(
+        &self,
+        history: &[PersonaSnapshot],
+        principles: &[String],
+    ) -> String {
         let mut prompt = String::new();
 
         prompt.push_str(r#"You are analyzing the evolution of an AI persona over time.
@@ -121,8 +125,14 @@ This persona tracks the following dimensions (each scored 0.0 to 1.0):
                 snapshot.captured_at.format("%Y-%m-%d %H:%M UTC")
             ));
             prompt.push_str(&format!("Trigger: {}\n", snapshot.trigger));
-            prompt.push_str(&format!("Self-description: {}\n", snapshot.self_description));
-            prompt.push_str(&format!("\nDimension scores:\n{}\n", self.format_traits(&snapshot.traits)));
+            prompt.push_str(&format!(
+                "Self-description: {}\n",
+                snapshot.self_description
+            ));
+            prompt.push_str(&format!(
+                "\nDimension scores:\n{}\n",
+                self.format_traits(&snapshot.traits)
+            ));
 
             if !snapshot.formative_experiences.is_empty() {
                 prompt.push_str("\nFormative experiences:\n");
@@ -138,11 +148,13 @@ This persona tracks the following dimensions (each scored 0.0 to 1.0):
         }
 
         // Build the expected dimensions for the response
-        let dimensions_json: Vec<String> = principles.iter()
+        let dimensions_json: Vec<String> = principles
+            .iter()
             .map(|p| format!("    \"{}\": 0.0-1.0", p))
             .collect();
 
-        prompt.push_str(&format!(r#"
+        prompt.push_str(&format!(
+            r#"
 === END HISTORY ===
 
 Now analyze this evolution and respond with a JSON object in exactly this format:
@@ -160,7 +172,9 @@ Now analyze this evolution and respond with a JSON object in exactly this format
 You may also add NEW dimensions to predicted_traits if you observe the persona developing
 along axes not currently being tracked. This is encouraged - let the personality define itself.
 
-Respond ONLY with valid JSON."#, dimensions_json.join(",\n")));
+Respond ONLY with valid JSON."#,
+            dimensions_json.join(",\n")
+        ));
 
         prompt
     }
@@ -170,7 +184,9 @@ Respond ONLY with valid JSON."#, dimensions_json.join(",\n")));
             return "  (no dimensions recorded)".to_string();
         }
 
-        traits.dimensions.iter()
+        traits
+            .dimensions
+            .iter()
             .map(|(name, score)| format!("  {}: {:.2}", name, score))
             .collect::<Vec<_>>()
             .join("\n")
@@ -281,17 +297,31 @@ Respond ONLY with valid JSON."#, dimensions_json.join(",\n")));
 
         let themes = json["themes"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let tensions = json["tensions"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         Ok(TrajectoryAnalysis {
-            narrative: json["narrative"].as_str().unwrap_or("Unable to analyze").to_string(),
-            trajectory: json["trajectory"].as_str().unwrap_or("Uncertain").to_string(),
+            narrative: json["narrative"]
+                .as_str()
+                .unwrap_or("Unable to analyze")
+                .to_string(),
+            trajectory: json["trajectory"]
+                .as_str()
+                .unwrap_or("Uncertain")
+                .to_string(),
             predicted_traits: PersonaTraits { dimensions },
             themes,
             tensions,
@@ -314,7 +344,8 @@ pub async fn capture_persona_snapshot(
     let url = format!("{}/v1/chat/completions", api_url);
 
     // Build dimensions JSON for the prompt
-    let dimensions_json: Vec<String> = guiding_principles.iter()
+    let dimensions_json: Vec<String> = guiding_principles
+        .iter()
         .map(|p| format!("        \"{}\": 0.0-1.0", p))
         .collect();
 
@@ -349,7 +380,8 @@ Be honest about your current state. Respond ONLY with valid JSON."#,
         if recent_experiences.is_empty() {
             "None recorded".to_string()
         } else {
-            recent_experiences.iter()
+            recent_experiences
+                .iter()
                 .enumerate()
                 .map(|(i, e)| format!("{}. {}", i + 1, e))
                 .collect::<Vec<_>>()
@@ -388,7 +420,9 @@ Be honest about your current state. Respond ONLY with valid JSON."#,
         messages: vec![
             Message {
                 role: "system".to_string(),
-                content: "You are introspecting on your own personality state. Be honest and precise.".to_string(),
+                content:
+                    "You are introspecting on your own personality state. Be honest and precise."
+                        .to_string(),
             },
             Message {
                 role: "user".to_string(),
@@ -429,8 +463,8 @@ Be honest about your current state. Respond ONLY with valid JSON."#,
 
     // Parse the response
     let json_str = extract_json(&content)?;
-    let json: serde_json::Value = serde_json::from_str(&json_str)
-        .context("Failed to parse persona snapshot as JSON")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&json_str).context("Failed to parse persona snapshot as JSON")?;
 
     // Parse traits from response
     let mut dimensions = HashMap::new();

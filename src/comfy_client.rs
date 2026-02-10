@@ -66,7 +66,8 @@ impl ComfyUIClient {
             client_id: None,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .json(&request)
             .send()
@@ -91,7 +92,8 @@ impl ComfyUIClient {
     pub async fn get_history(&self, prompt_id: &str) -> Result<Option<HistoryEntry>> {
         let url = format!("{}/history/{}", self.api_url, prompt_id);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -110,7 +112,11 @@ impl ComfyUIClient {
     }
 
     /// Wait for a prompt to complete execution
-    pub async fn wait_for_completion(&self, prompt_id: &str, timeout_secs: u64) -> Result<ImageInfo> {
+    pub async fn wait_for_completion(
+        &self,
+        prompt_id: &str,
+        timeout_secs: u64,
+    ) -> Result<ImageInfo> {
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(timeout_secs);
 
@@ -127,7 +133,11 @@ impl ComfyUIClient {
                         for (node_id, output) in &history.outputs {
                             if let Some(images) = &output.images {
                                 if let Some(image) = images.first() {
-                                    tracing::info!("Image generated: {} (node {})", image.filename, node_id);
+                                    tracing::info!(
+                                        "Image generated: {} (node {})",
+                                        image.filename,
+                                        node_id
+                                    );
                                     return Ok(image.clone()); // Clone to return owned value
                                 }
                             }
@@ -146,13 +156,11 @@ impl ComfyUIClient {
     pub async fn download_image(&self, image_info: &ImageInfo) -> Result<PathBuf> {
         let url = format!(
             "{}/view?filename={}&subfolder={}&type={}",
-            self.api_url,
-            image_info.filename,
-            image_info.subfolder,
-            image_info.image_type
+            self.api_url, image_info.filename, image_info.subfolder, image_info.image_type
         );
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -162,7 +170,10 @@ impl ComfyUIClient {
             anyhow::bail!("Failed to download image: {}", response.status());
         }
 
-        let bytes = response.bytes().await.context("Failed to read image bytes")?;
+        let bytes = response
+            .bytes()
+            .await
+            .context("Failed to read image bytes")?;
 
         // Save to temp file
         let output_path = PathBuf::from(format!("generated_{}", image_info.filename));
@@ -176,7 +187,8 @@ impl ComfyUIClient {
     pub async fn test_connection(&self) -> Result<()> {
         let url = format!("{}/history", self.api_url);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await

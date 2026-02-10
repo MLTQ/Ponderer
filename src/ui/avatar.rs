@@ -26,7 +26,8 @@ impl Avatar {
             return Err(format!("Avatar file not found: {}", path));
         }
 
-        let extension = path_obj.extension()
+        let extension = path_obj
+            .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
@@ -40,18 +41,13 @@ impl Avatar {
 
     /// Load a static image (PNG/JPG)
     fn load_static(ctx: &egui::Context, path: &str) -> Result<Self, String> {
-        let img = image::open(path)
-            .map_err(|e| format!("Failed to load image {}: {}", path, e))?;
+        let img = image::open(path).map_err(|e| format!("Failed to load image {}: {}", path, e))?;
 
         let size = [img.width() as usize, img.height() as usize];
         let pixels = img.to_rgba8();
         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_raw());
 
-        let texture = ctx.load_texture(
-            path,
-            color_image,
-            egui::TextureOptions::LINEAR,
-        );
+        let texture = ctx.load_texture(path, color_image, egui::TextureOptions::LINEAR);
 
         Ok(Self {
             frames: vec![AvatarFrame {
@@ -66,8 +62,8 @@ impl Avatar {
 
     /// Load an animated GIF
     fn load_animated_gif(ctx: &egui::Context, path: &str) -> Result<Self, String> {
-        let file = std::fs::File::open(path)
-            .map_err(|e| format!("Failed to open GIF {}: {}", path, e))?;
+        let file =
+            std::fs::File::open(path).map_err(|e| format!("Failed to open GIF {}: {}", path, e))?;
 
         let reader = std::io::BufReader::new(file);
 
@@ -79,19 +75,20 @@ impl Avatar {
         let mut avatar_frames = Vec::new();
 
         for (index, frame_result) in frames_iter.enumerate() {
-            let frame = frame_result
-                .map_err(|e| format!("Failed to decode GIF frame {}: {}", index, e))?;
+            let frame =
+                frame_result.map_err(|e| format!("Failed to decode GIF frame {}: {}", index, e))?;
 
             let delay = frame.delay();
             let duration = Duration::from_millis(
-                (delay.numer_denom_ms().0 as u64 * 1000) / delay.numer_denom_ms().1 as u64
+                (delay.numer_denom_ms().0 as u64 * 1000) / delay.numer_denom_ms().1 as u64,
             );
 
             let buffer = frame.buffer();
             let size = [buffer.width() as usize, buffer.height() as usize];
 
             // Convert to RGBA
-            let rgba_data: Vec<u8> = buffer.pixels()
+            let rgba_data: Vec<u8> = buffer
+                .pixels()
                 .flat_map(|p| {
                     let rgba = p.0;
                     [rgba[0], rgba[1], rgba[2], rgba[3]]
@@ -175,33 +172,27 @@ impl AvatarSet {
         thinking_path: Option<&str>,
         active_path: Option<&str>,
     ) -> Self {
-        let idle = idle_path.and_then(|path| {
-            match Avatar::load(ctx, path) {
-                Ok(avatar) => Some(avatar),
-                Err(e) => {
-                    tracing::warn!("Failed to load idle avatar: {}", e);
-                    None
-                }
+        let idle = idle_path.and_then(|path| match Avatar::load(ctx, path) {
+            Ok(avatar) => Some(avatar),
+            Err(e) => {
+                tracing::warn!("Failed to load idle avatar: {}", e);
+                None
             }
         });
 
-        let thinking = thinking_path.and_then(|path| {
-            match Avatar::load(ctx, path) {
-                Ok(avatar) => Some(avatar),
-                Err(e) => {
-                    tracing::warn!("Failed to load thinking avatar: {}", e);
-                    None
-                }
+        let thinking = thinking_path.and_then(|path| match Avatar::load(ctx, path) {
+            Ok(avatar) => Some(avatar),
+            Err(e) => {
+                tracing::warn!("Failed to load thinking avatar: {}", e);
+                None
             }
         });
 
-        let active = active_path.and_then(|path| {
-            match Avatar::load(ctx, path) {
-                Ok(avatar) => Some(avatar),
-                Err(e) => {
-                    tracing::warn!("Failed to load active avatar: {}", e);
-                    None
-                }
+        let active = active_path.and_then(|path| match Avatar::load(ctx, path) {
+            Ok(avatar) => Some(avatar),
+            Err(e) => {
+                tracing::warn!("Failed to load active avatar: {}", e);
+                None
             }
         });
 

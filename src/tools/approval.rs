@@ -180,7 +180,8 @@ mod tests {
     #[tokio::test]
     async fn test_always_allow_policy() {
         let gate = ApprovalGate::new();
-        gate.set_tool_policy("shell", ApprovalPolicy::AlwaysAllow).await;
+        gate.set_tool_policy("shell", ApprovalPolicy::AlwaysAllow)
+            .await;
         let result = gate.check("shell", true, true, "run ls").await;
         assert_eq!(result, ApprovalDecision::Approved);
     }
@@ -188,7 +189,8 @@ mod tests {
     #[tokio::test]
     async fn test_always_ask_policy() {
         let gate = ApprovalGate::new();
-        gate.set_tool_policy("shell", ApprovalPolicy::AlwaysAsk).await;
+        gate.set_tool_policy("shell", ApprovalPolicy::AlwaysAsk)
+            .await;
         let result = gate.check("shell", true, false, "run ls").await;
         assert!(matches!(result, ApprovalDecision::NeedsApproval { .. }));
     }

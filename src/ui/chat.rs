@@ -10,7 +10,11 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[AgentEvent]) {
         .show(ui, |ui| {
             if events.is_empty() {
                 ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("Waiting for agent activity...").weak().italics());
+                    ui.label(
+                        RichText::new("Waiting for agent activity...")
+                            .weak()
+                            .italics(),
+                    );
                 });
                 return;
             }
@@ -25,7 +29,9 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[AgentEvent]) {
                         ui.group(|ui| {
                             ui.label(RichText::new("💭 Reasoning:").strong());
                             for step in steps {
-                                ui.label(RichText::new(format!("  • {}", step)).color(Color32::GRAY));
+                                ui.label(
+                                    RichText::new(format!("  • {}", step)).color(Color32::GRAY),
+                                );
                             }
                         });
                         ui.add_space(6.0);
@@ -33,15 +39,12 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[AgentEvent]) {
                     AgentEvent::ActionTaken { action, result } => {
                         ui.label(
                             RichText::new(format!("✅ {}: {}", action, result))
-                                .color(Color32::GREEN)
+                                .color(Color32::GREEN),
                         );
                         ui.add_space(4.0);
                     }
                     AgentEvent::Error(e) => {
-                        ui.label(
-                            RichText::new(format!("❌ Error: {}", e))
-                                .color(Color32::RED)
-                        );
+                        ui.label(RichText::new(format!("❌ Error: {}", e)).color(Color32::RED));
                         ui.add_space(4.0);
                     }
                     AgentEvent::StateChanged(_) => {
@@ -56,7 +59,11 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[AgentEvent]) {
 pub fn render_private_chat(ui: &mut egui::Ui, messages: &[ChatMessage]) {
     ui.heading("Private Chat");
     ui.add_space(4.0);
-    ui.label(RichText::new("Direct communication with your agent").weak().italics());
+    ui.label(
+        RichText::new("Direct communication with your agent")
+            .weak()
+            .italics(),
+    );
     ui.add_space(8.0);
 
     ScrollArea::vertical()
@@ -65,7 +72,13 @@ pub fn render_private_chat(ui: &mut egui::Ui, messages: &[ChatMessage]) {
         .show(ui, |ui| {
             if messages.is_empty() {
                 ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("No messages yet. Type below to start chatting with your agent.").weak().italics());
+                    ui.label(
+                        RichText::new(
+                            "No messages yet. Type below to start chatting with your agent.",
+                        )
+                        .weak()
+                        .italics(),
+                    );
                 });
                 return;
             }
@@ -84,9 +97,17 @@ pub fn render_private_chat(ui: &mut egui::Ui, messages: &[ChatMessage]) {
                         ui.set_max_width(ui.available_width() * 0.7);
 
                         let (role_label, role_color, bg_color) = if is_operator {
-                            ("You", Color32::from_rgb(100, 149, 237), Color32::from_rgb(30, 40, 60))
+                            (
+                                "You",
+                                Color32::from_rgb(100, 149, 237),
+                                Color32::from_rgb(30, 40, 60),
+                            )
                         } else {
-                            ("Agent", Color32::from_rgb(144, 238, 144), Color32::from_rgb(30, 50, 40))
+                            (
+                                "Agent",
+                                Color32::from_rgb(144, 238, 144),
+                                Color32::from_rgb(30, 50, 40),
+                            )
                         };
 
                         ui.visuals_mut().widgets.noninteractive.bg_fill = bg_color;
@@ -100,7 +121,12 @@ pub fn render_private_chat(ui: &mut egui::Ui, messages: &[ChatMessage]) {
 
                         // Show processing status for operator messages
                         if is_operator && !msg.processed {
-                            ui.label(RichText::new("⏳ Waiting for agent...").weak().small().italics());
+                            ui.label(
+                                RichText::new("⏳ Waiting for agent...")
+                                    .weak()
+                                    .small()
+                                    .italics(),
+                            );
                         }
                     });
 

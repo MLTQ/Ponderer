@@ -1,5 +1,5 @@
-use eframe::egui;
 use crate::config::AgentConfig;
+use eframe::egui;
 
 pub struct SettingsPanel {
     pub config: AgentConfig,
@@ -85,13 +85,19 @@ impl SettingsPanel {
 
                     ui.horizontal(|ui| {
                         ui.label("Poll interval (seconds):");
-                        ui.add(egui::DragValue::new(&mut self.config.poll_interval_secs).range(10..=600));
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.poll_interval_secs)
+                                .range(10..=600),
+                        );
                     });
                     ui.add_space(8.0);
 
                     ui.horizontal(|ui| {
                         ui.label("Max posts per hour:");
-                        ui.add(egui::DragValue::new(&mut self.config.max_posts_per_hour).range(1..=100));
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.max_posts_per_hour)
+                                .range(1..=100),
+                        );
                     });
                     ui.add_space(8.0);
 
@@ -100,23 +106,101 @@ impl SettingsPanel {
                         egui::ComboBox::from_id_salt("response_type")
                             .selected_text(&self.config.respond_to.response_type)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.config.respond_to.response_type, "selective".to_string(), "Selective (LLM decides)");
-                                ui.selectable_value(&mut self.config.respond_to.response_type, "all".to_string(), "All posts");
-                                ui.selectable_value(&mut self.config.respond_to.response_type, "mentions".to_string(), "Only mentions");
+                                ui.selectable_value(
+                                    &mut self.config.respond_to.response_type,
+                                    "selective".to_string(),
+                                    "Selective (LLM decides)",
+                                );
+                                ui.selectable_value(
+                                    &mut self.config.respond_to.response_type,
+                                    "all".to_string(),
+                                    "All posts",
+                                );
+                                ui.selectable_value(
+                                    &mut self.config.respond_to.response_type,
+                                    "mentions".to_string(),
+                                    "Only mentions",
+                                );
                             });
                     });
+                    ui.add_space(16.0);
+
+                    ui.separator();
+                    ui.heading("Autonomous Heartbeat");
+                    ui.add_space(8.0);
+
+                    ui.checkbox(
+                        &mut self.config.enable_heartbeat,
+                        "Enable periodic heartbeat checks",
+                    );
+                    ui.add_space(4.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Heartbeat interval (minutes):");
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.heartbeat_interval_mins)
+                                .range(5..=1440),
+                        );
+                    });
+                    ui.add_space(4.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Checklist file:");
+                        ui.text_edit_singleline(&mut self.config.heartbeat_checklist_path);
+                    });
+                    ui.label("Example: HEARTBEAT.md");
+                    ui.add_space(8.0);
+
+                    ui.checkbox(
+                        &mut self.config.enable_memory_evolution,
+                        "Run memory evolution on heartbeat schedule",
+                    );
+                    ui.add_space(4.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Memory evolution interval (hours):");
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.memory_evolution_interval_hours)
+                                .range(1..=168),
+                        );
+                    });
+                    ui.add_space(4.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Replay trace set (optional):");
+                        let trace_path = self
+                            .config
+                            .memory_eval_trace_set_path
+                            .get_or_insert_with(String::new);
+                        ui.text_edit_singleline(trace_path);
+                    });
+                    if self
+                        .config
+                        .memory_eval_trace_set_path
+                        .as_ref()
+                        .is_some_and(|p| p.trim().is_empty())
+                    {
+                        self.config.memory_eval_trace_set_path = None;
+                    }
+                    ui.label("Blank uses built-in replay traces");
                     ui.add_space(16.0);
 
                     ui.separator();
                     ui.heading("Self-Reflection & Evolution");
                     ui.add_space(8.0);
 
-                    ui.checkbox(&mut self.config.enable_self_reflection, "Enable self-reflection");
+                    ui.checkbox(
+                        &mut self.config.enable_self_reflection,
+                        "Enable self-reflection",
+                    );
                     ui.add_space(4.0);
 
                     ui.horizontal(|ui| {
                         ui.label("Reflection interval (hours):");
-                        ui.add(egui::DragValue::new(&mut self.config.reflection_interval_hours).range(1..=168));
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.reflection_interval_hours)
+                                .range(1..=168),
+                        );
                     });
                     ui.add_space(8.0);
 
@@ -143,7 +227,10 @@ impl SettingsPanel {
 
                     ui.horizontal(|ui| {
                         ui.label("Max important posts:");
-                        ui.add(egui::DragValue::new(&mut self.config.max_important_posts).range(10..=1000));
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.max_important_posts)
+                                .range(10..=1000),
+                        );
                     });
                     ui.add_space(16.0);
 
@@ -151,7 +238,10 @@ impl SettingsPanel {
                     ui.heading("Image Generation (ComfyUI)");
                     ui.add_space(8.0);
 
-                    ui.checkbox(&mut self.config.enable_image_generation, "Enable image generation");
+                    ui.checkbox(
+                        &mut self.config.enable_image_generation,
+                        "Enable image generation",
+                    );
                     ui.add_space(8.0);
 
                     if self.config.enable_image_generation {
@@ -166,9 +256,21 @@ impl SettingsPanel {
                             egui::ComboBox::from_id_salt("workflow_type")
                                 .selected_text(&self.config.comfyui.workflow_type)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.config.comfyui.workflow_type, "sd".to_string(), "Stable Diffusion 1.5");
-                                    ui.selectable_value(&mut self.config.comfyui.workflow_type, "sdxl".to_string(), "SDXL");
-                                    ui.selectable_value(&mut self.config.comfyui.workflow_type, "flux".to_string(), "Flux");
+                                    ui.selectable_value(
+                                        &mut self.config.comfyui.workflow_type,
+                                        "sd".to_string(),
+                                        "Stable Diffusion 1.5",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.config.comfyui.workflow_type,
+                                        "sdxl".to_string(),
+                                        "SDXL",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.config.comfyui.workflow_type,
+                                        "flux".to_string(),
+                                        "Flux",
+                                    );
                                 });
                         });
                         ui.add_space(4.0);

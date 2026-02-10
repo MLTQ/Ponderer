@@ -1,20 +1,32 @@
-pub mod reasoning;
 pub mod actions;
 pub mod image_gen;
+pub mod reasoning;
 pub mod trajectory;
 
 use anyhow::Result;
 use chrono::{Duration as ChronoDuration, Utc};
 use flume::Sender;
 use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 
 use crate::config::AgentConfig;
 use crate::database::AgentDatabase;
+use crate::memory::archive::{MemoryEvalRunRecord, MemoryPromotionPolicy, PromotionOutcome};
+use crate::memory::eval::{
+    default_replay_trace_set, evaluate_trace_set, load_trace_set, EvalBackendKind, MemoryEvalReport,
+};
+use crate::memory::WorkingMemoryEntry;
 use crate::skills::{Skill, SkillContext, SkillEvent};
+use crate::tools::agentic::{AgenticConfig, AgenticLoop};
+use crate::tools::ToolContext;
 use crate::tools::ToolRegistry;
+
+const HEARTBEAT_LAST_RUN_STATE_KEY: &str = "heartbeat_last_run_at";
+const MEMORY_EVOLUTION_LAST_RUN_STATE_KEY: &str = "memory_evolution_last_run_at";
 
 #[derive(Debug, Clone)]
 pub enum AgentVisualState {
@@ -109,7 +121,10 @@ impl Agent {
         // Initialize database for memory and persona tracking
         let database = match AgentDatabase::new(&config.database_path) {
             Ok(db) => {
-                tracing::info!("Agent memory database initialized: {}", config.database_path);
+                tracing::info!(
+                    "Agent memory database initialized: {}",
+                    config.database_path
+                );
                 Some(db)
             }
             Err(e) => {
@@ -120,7 +135,9 @@ impl Agent {
 
         // Initialize trajectory engine for Ludonarrative Assonantic Tracing
         let trajectory_engine = if config.enable_self_reflection {
-            let model = config.reflection_model.clone()
+            let model = config
+                .reflection_model
+                .clone()
                 .unwrap_or_else(|| config.llm_model.clone());
             tracing::info!("Trajectory engine enabled (model: {})", model);
             Some(trajectory::TrajectoryEngine::new(
@@ -183,7 +200,9 @@ impl Agent {
 
         // Recreate trajectory engine if self-reflection settings changed
         let new_trajectory = if new_config.enable_self_reflection {
-            let model = new_config.reflection_model.clone()
+            let model = new_config
+                .reflection_model
+                .clone()
                 .unwrap_or_else(|| new_config.llm_model.clone());
             Some(trajectory::TrajectoryEngine::new(
                 new_config.llm_api_url.clone(),
@@ -200,7 +219,10 @@ impl Agent {
         *self.image_gen.write().await = new_image_gen;
         *self.trajectory_engine.write().await = new_trajectory;
 
-        self.emit(AgentEvent::Observation("Configuration reloaded".to_string())).await;
+        self.emit(AgentEvent::Observation(
+            "Configuration reloaded".to_string(),
+        ))
+        .await;
         tracing::info!("Configuration reloaded successfully");
     }
 
@@ -233,7 +255,8 @@ impl Agent {
     pub async fn run_loop(self: Arc<Self>) -> Result<()> {
         tracing::info!("Agent loop starting...");
 
-        self.emit(AgentEvent::Observation("Agent starting up...".to_string())).await;
+        self.emit(AgentEvent::Observation("Agent starting up...".to_string()))
+            .await;
 
         // Capture initial persona snapshot if this is the first run
         self.maybe_capture_initial_persona().await;
@@ -253,6 +276,9 @@ impl Agent {
             // Check if it's time for persona evolution (Ludonarrative Assonantic Tracing)
             self.maybe_evolve_persona().await;
 
+            // Run periodic autonomous heartbeat tasks (if enabled and due)
+            self.maybe_run_heartbeat().await;
+
             // Get poll interval from config
             let poll_interval = {
                 let config = self.config.read().await;
@@ -265,11 +291,11 @@ impl Agent {
                 let state = self.state.read().await;
                 let config = self.config.read().await;
                 if state.actions_this_hour >= config.max_posts_per_hour {
-                    self.emit(AgentEvent::Observation(
-                        format!("Rate limit reached ({}/{}), waiting...",
-                                state.actions_this_hour,
-                                config.max_posts_per_hour)
-                    )).await;
+                    self.emit(AgentEvent::Observation(format!(
+                        "Rate limit reached ({}/{}), waiting...",
+                        state.actions_this_hour, config.max_posts_per_hour
+                    )))
+                    .await;
                     continue;
                 }
             }
@@ -291,7 +317,10 @@ impl Agent {
             match db.count_persona_snapshots() {
                 Ok(0) => {
                     drop(db_lock);
-                    self.emit(AgentEvent::Observation("Capturing initial persona snapshot...".to_string())).await;
+                    self.emit(AgentEvent::Observation(
+                        "Capturing initial persona snapshot...".to_string(),
+                    ))
+                    .await;
                     if let Err(e) = self.capture_persona_snapshot("initial").await {
                         tracing::warn!("Failed to capture initial persona: {}", e);
                     }
@@ -336,21 +365,372 @@ impl Agent {
         drop(db_lock);
 
         if should_reflect {
-            self.emit(AgentEvent::Observation("Beginning persona evolution cycle...".to_string())).await;
+            self.emit(AgentEvent::Observation(
+                "Beginning persona evolution cycle...".to_string(),
+            ))
+            .await;
             self.set_state(AgentVisualState::Thinking).await;
 
             if let Err(e) = self.run_persona_evolution().await {
                 tracing::error!("Persona evolution failed: {}", e);
-                self.emit(AgentEvent::Error(format!("Persona evolution error: {}", e))).await;
+                self.emit(AgentEvent::Error(format!("Persona evolution error: {}", e)))
+                    .await;
             }
         }
+    }
+
+    /// Run autonomous heartbeat checks on a configurable schedule.
+    ///
+    /// Heartbeat only executes when both:
+    /// 1) heartbeat mode is enabled, and
+    /// 2) the configured interval has elapsed since the last run.
+    ///
+    /// It looks for pending checklist items from HEARTBEAT.md-style markdown
+    /// and reminder-like working-memory entries before invoking the tool-calling loop.
+    async fn maybe_run_heartbeat(&self) {
+        let (
+            enabled,
+            heartbeat_interval_mins,
+            heartbeat_checklist_path,
+            llm_api_url,
+            llm_model,
+            llm_api_key,
+            system_prompt,
+            username,
+        ) = {
+            let config = self.config.read().await;
+            (
+                config.enable_heartbeat,
+                config.heartbeat_interval_mins.max(1),
+                config.heartbeat_checklist_path.clone(),
+                config.llm_api_url.clone(),
+                config.llm_model.clone(),
+                config.llm_api_key.clone(),
+                config.system_prompt.clone(),
+                config.username.clone(),
+            )
+        };
+
+        if !enabled {
+            return;
+        }
+
+        let (should_run, memory_hints) = {
+            let db_lock = self.database.read().await;
+            let Some(db) = db_lock.as_ref() else {
+                tracing::warn!("Heartbeat enabled but database is unavailable");
+                return;
+            };
+
+            let now = Utc::now();
+            let last_run = db
+                .get_state(HEARTBEAT_LAST_RUN_STATE_KEY)
+                .ok()
+                .flatten()
+                .and_then(|raw| raw.parse::<chrono::DateTime<Utc>>().ok());
+
+            let is_due = last_run
+                .map(|last| now - last >= ChronoDuration::minutes(heartbeat_interval_mins as i64))
+                .unwrap_or(true);
+
+            if !is_due {
+                (false, Vec::new())
+            } else {
+                if let Err(e) = db.set_state(HEARTBEAT_LAST_RUN_STATE_KEY, &now.to_rfc3339()) {
+                    tracing::warn!("Failed to persist heartbeat timestamp: {}", e);
+                }
+
+                let hints = db
+                    .get_all_working_memory()
+                    .map(|entries| collect_heartbeat_memory_hints(&entries))
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("Heartbeat failed to load working memory: {}", e);
+                        Vec::new()
+                    });
+                (true, hints)
+            }
+        };
+
+        if !should_run {
+            return;
+        }
+
+        // Memory evolution is scheduled off heartbeat ticks but can use its own interval.
+        self.maybe_run_memory_evolution().await;
+
+        let checklist_items = load_pending_checklist_items(&heartbeat_checklist_path)
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Heartbeat checklist read failed ({}): {}",
+                    heartbeat_checklist_path,
+                    e
+                );
+                Vec::new()
+            });
+
+        if checklist_items.is_empty() && memory_hints.is_empty() {
+            tracing::debug!("Heartbeat due, but no pending checklist or reminder items");
+            return;
+        }
+
+        self.emit(AgentEvent::Observation(
+            "Running autonomous heartbeat checks...".to_string(),
+        ))
+        .await;
+        self.set_state(AgentVisualState::Thinking).await;
+
+        let mut user_message = String::from(
+            "You are running a scheduled heartbeat cycle for routine maintenance.\n\
+             If nothing actionable remains, respond exactly with: NO_ACTION\n\
+             If action is needed, use tools to complete work, then provide a concise summary.",
+        );
+
+        if !checklist_items.is_empty() {
+            user_message.push_str("\n\nPending checklist items:\n");
+            for item in &checklist_items {
+                user_message.push_str(&format!("- {}\n", item));
+            }
+        }
+
+        if !memory_hints.is_empty() {
+            user_message.push_str("\nReminder-like working-memory notes:\n");
+            for note in &memory_hints {
+                user_message.push_str(&format!("- {}\n", note));
+            }
+        }
+
+        user_message.push_str(
+            "\nUse safe, incremental actions. If blocked by approval or missing access, explain the block in your summary.",
+        );
+
+        let heartbeat_system_prompt = format!(
+            "{}\n\nYou are in autonomous heartbeat mode. Be concise and execution-focused.",
+            system_prompt
+        );
+
+        let loop_config = AgenticConfig {
+            max_iterations: 8,
+            api_url: agentic_api_url(&llm_api_url),
+            model: llm_model,
+            api_key: llm_api_key,
+            temperature: 0.2,
+            max_tokens: 2048,
+        };
+        let agentic_loop = AgenticLoop::new(loop_config, self.tool_registry.clone());
+
+        let working_directory = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+        let tool_ctx = ToolContext {
+            working_directory,
+            username,
+            autonomous: true,
+        };
+
+        match agentic_loop
+            .run(&heartbeat_system_prompt, &user_message, &tool_ctx)
+            .await
+        {
+            Ok(result) => {
+                let summary = result
+                    .response
+                    .unwrap_or_else(|| "NO_ACTION".to_string())
+                    .trim()
+                    .to_string();
+                let no_action = summary.eq_ignore_ascii_case("NO_ACTION");
+
+                if no_action && result.tool_calls_made.is_empty() {
+                    tracing::debug!("Heartbeat completed with no action");
+                    return;
+                }
+
+                let tool_count = result.tool_calls_made.len();
+                let event_result = if no_action {
+                    format!(
+                        "No explicit summary; {} tool call(s) attempted.",
+                        tool_count
+                    )
+                } else {
+                    format!(
+                        "{} tool call(s). {}",
+                        tool_count,
+                        truncate_for_event(&summary, 240)
+                    )
+                };
+
+                self.emit(AgentEvent::ActionTaken {
+                    action: "Autonomous heartbeat".to_string(),
+                    result: event_result,
+                })
+                .await;
+
+                if !no_action {
+                    let db_lock = self.database.read().await;
+                    if let Some(db) = db_lock.as_ref() {
+                        if let Err(e) =
+                            db.add_chat_message("agent", &format!("[heartbeat] {}", summary))
+                        {
+                            tracing::warn!("Failed to persist heartbeat summary to chat: {}", e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Heartbeat loop failed: {}", e);
+                self.emit(AgentEvent::Error(format!("Heartbeat error: {}", e)))
+                    .await;
+            }
+        }
+    }
+
+    /// Periodically benchmark memory backends and record promotion decisions.
+    ///
+    /// This is triggered by heartbeat ticks but has its own longer cadence
+    /// (default 24h) and independent enable/disable switch.
+    async fn maybe_run_memory_evolution(&self) {
+        let (enabled, interval_hours, trace_set_path) = {
+            let config = self.config.read().await;
+            (
+                config.enable_memory_evolution,
+                config.memory_evolution_interval_hours.max(1),
+                config.memory_eval_trace_set_path.clone(),
+            )
+        };
+
+        if !enabled {
+            return;
+        }
+
+        let should_run = {
+            let db_lock = self.database.read().await;
+            let Some(db) = db_lock.as_ref() else {
+                tracing::warn!("Memory evolution enabled but database is unavailable");
+                return;
+            };
+
+            let now = Utc::now();
+            let last_run = db
+                .get_state(MEMORY_EVOLUTION_LAST_RUN_STATE_KEY)
+                .ok()
+                .flatten()
+                .and_then(|raw| raw.parse::<chrono::DateTime<Utc>>().ok());
+
+            let is_due = last_run
+                .map(|last| now - last >= ChronoDuration::hours(interval_hours as i64))
+                .unwrap_or(true);
+
+            if is_due {
+                if let Err(e) = db.set_state(MEMORY_EVOLUTION_LAST_RUN_STATE_KEY, &now.to_rfc3339())
+                {
+                    tracing::warn!("Failed to persist memory evolution timestamp: {}", e);
+                }
+            }
+
+            is_due
+        };
+
+        if !should_run {
+            return;
+        }
+
+        self.emit(AgentEvent::Observation(
+            "Running scheduled memory evolution benchmark...".to_string(),
+        ))
+        .await;
+
+        let trace_set = match load_memory_eval_trace_set(trace_set_path.as_deref()) {
+            Ok(trace_set) => trace_set,
+            Err(e) => {
+                tracing::warn!("Memory evolution trace load failed: {}", e);
+                self.emit(AgentEvent::Error(format!(
+                    "Memory evolution skipped: failed to load trace set ({})",
+                    e
+                )))
+                .await;
+                return;
+            }
+        };
+
+        let report = match evaluate_trace_set(
+            &trace_set,
+            &[
+                EvalBackendKind::KvV1,
+                EvalBackendKind::FtsV2,
+                EvalBackendKind::EpisodicV3,
+            ],
+        ) {
+            Ok(report) => report,
+            Err(e) => {
+                tracing::warn!("Memory evolution evaluation failed: {}", e);
+                self.emit(AgentEvent::Error(format!(
+                    "Memory evolution evaluation failed: {}",
+                    e
+                )))
+                .await;
+                return;
+            }
+        };
+
+        let run = MemoryEvalRunRecord::from_report(report.clone());
+        let candidate_backend_id = select_promotion_candidate_backend(&report, "kv_v1")
+            .unwrap_or_else(|| "fts_v2".to_string());
+        let policy = MemoryPromotionPolicy::default();
+
+        let decision_result = {
+            let db_lock = self.database.read().await;
+            if let Some(db) = db_lock.as_ref() {
+                if let Err(e) = db.save_memory_eval_run(&run) {
+                    Err(format!("Failed to store memory eval run: {}", e))
+                } else {
+                    match db.evaluate_and_record_memory_promotion(
+                        &run.id,
+                        "kv_v1",
+                        &candidate_backend_id,
+                        &policy,
+                    ) {
+                        Ok(decision) => Ok(decision),
+                        Err(e) => Err(format!("Failed to record memory promotion decision: {}", e)),
+                    }
+                }
+            } else {
+                Err("Memory evolution write skipped: database unavailable".to_string())
+            }
+        };
+
+        let decision = match decision_result {
+            Ok(decision) => decision,
+            Err(msg) => {
+                tracing::warn!("{}", msg);
+                self.emit(AgentEvent::Error(msg)).await;
+                return;
+            }
+        };
+
+        let decision_label = match decision.outcome {
+            PromotionOutcome::Promote => "promote",
+            PromotionOutcome::Hold => "hold",
+        };
+
+        self.emit(AgentEvent::ActionTaken {
+            action: "Memory evolution eval".to_string(),
+            result: format!(
+                "run={} candidate={} decision={}",
+                run.id, candidate_backend_id, decision_label
+            ),
+        })
+        .await;
     }
 
     /// Run the full persona evolution cycle (Ludonarrative Assonantic Tracing)
     async fn run_persona_evolution(&self) -> Result<()> {
         // 1. Capture current persona snapshot
-        self.emit(AgentEvent::Observation("Capturing persona snapshot...".to_string())).await;
-        let snapshot = self.capture_persona_snapshot("scheduled_reflection").await?;
+        self.emit(AgentEvent::Observation(
+            "Capturing persona snapshot...".to_string(),
+        ))
+        .await;
+        let snapshot = self
+            .capture_persona_snapshot("scheduled_reflection")
+            .await?;
 
         // 2. Get persona history and guiding principles for trajectory inference
         let (history, guiding_principles) = {
@@ -367,11 +747,16 @@ impl Agent {
         };
 
         // 3. Run trajectory inference
-        self.emit(AgentEvent::Observation("Inferring personality trajectory...".to_string())).await;
+        self.emit(AgentEvent::Observation(
+            "Inferring personality trajectory...".to_string(),
+        ))
+        .await;
         let trajectory_analysis = {
             let engine_lock = self.trajectory_engine.read().await;
             if let Some(ref engine) = *engine_lock {
-                engine.infer_trajectory(&history, &guiding_principles).await?
+                engine
+                    .infer_trajectory(&history, &guiding_principles)
+                    .await?
             } else {
                 return Err(anyhow::anyhow!("Trajectory engine not available"));
             }
@@ -388,7 +773,8 @@ impl Agent {
             "Trajectory inferred: {} (confidence: {:.0}%)",
             &trajectory_analysis.trajectory[..trajectory_analysis.trajectory.len().min(80)],
             trajectory_analysis.confidence * 100.0
-        ))).await;
+        )))
+        .await;
 
         // 5. Update the snapshot with trajectory and save
         let mut updated_snapshot = snapshot;
@@ -408,12 +794,16 @@ impl Agent {
             format!("Narrative: {}", trajectory_analysis.narrative),
             format!("Direction: {}", trajectory_analysis.trajectory),
             format!("Themes: {}", trajectory_analysis.themes.join(", ")),
-            format!("Tensions: {}", if trajectory_analysis.tensions.is_empty() {
-                "None identified".to_string()
-            } else {
-                trajectory_analysis.tensions.join(", ")
-            }),
-        ])).await;
+            format!(
+                "Tensions: {}",
+                if trajectory_analysis.tensions.is_empty() {
+                    "None identified".to_string()
+                } else {
+                    trajectory_analysis.tensions.join(", ")
+                }
+            ),
+        ]))
+        .await;
 
         self.set_state(AgentVisualState::Happy).await;
         sleep(Duration::from_secs(2)).await;
@@ -422,10 +812,15 @@ impl Agent {
     }
 
     /// Capture a persona snapshot
-    async fn capture_persona_snapshot(&self, trigger: &str) -> Result<crate::database::PersonaSnapshot> {
+    async fn capture_persona_snapshot(
+        &self,
+        trigger: &str,
+    ) -> Result<crate::database::PersonaSnapshot> {
         let config = self.config.read().await;
         let api_url = config.llm_api_url.clone();
-        let model = config.reflection_model.clone()
+        let model = config
+            .reflection_model
+            .clone()
             .unwrap_or_else(|| config.llm_model.clone());
         let api_key = config.llm_api_key.clone();
         let system_prompt = config.system_prompt.clone();
@@ -454,7 +849,8 @@ impl Agent {
             trigger,
             &experiences,
             &guiding_principles,
-        ).await?;
+        )
+        .await?;
 
         // Save the snapshot
         {
@@ -474,7 +870,10 @@ impl Agent {
 
         // Poll all skills for new events
         self.set_state(AgentVisualState::Reading).await;
-        self.emit(AgentEvent::Observation("Polling skills for new events...".to_string())).await;
+        self.emit(AgentEvent::Observation(
+            "Polling skills for new events...".to_string(),
+        ))
+        .await;
 
         let username = {
             let config = self.config.read().await;
@@ -494,14 +893,23 @@ impl Agent {
                 match skill.poll(&skill_ctx).await {
                     Ok(events) => {
                         if !events.is_empty() {
-                            tracing::debug!("Skill '{}' produced {} events", skill.name(), events.len());
+                            tracing::debug!(
+                                "Skill '{}' produced {} events",
+                                skill.name(),
+                                events.len()
+                            );
                         }
                         all_events.extend(events);
                         skill_names.push(skill.name().to_string());
                     }
                     Err(e) => {
                         tracing::warn!("Skill '{}' poll failed: {}", skill.name(), e);
-                        self.emit(AgentEvent::Error(format!("Skill '{}' error: {}", skill.name(), e))).await;
+                        self.emit(AgentEvent::Error(format!(
+                            "Skill '{}' error: {}",
+                            skill.name(),
+                            e
+                        )))
+                        .await;
                     }
                 }
             }
@@ -513,9 +921,12 @@ impl Agent {
             state.processed_events.clone()
         };
 
-        let filtered_events: Vec<SkillEvent> = all_events.into_iter()
+        let filtered_events: Vec<SkillEvent> = all_events
+            .into_iter()
             .filter(|event| {
-                let SkillEvent::NewContent { ref id, ref author, .. } = event;
+                let SkillEvent::NewContent {
+                    ref id, ref author, ..
+                } = event;
                 let already_processed = processed_events.contains(id);
                 let is_own = author == &username;
                 !already_processed && !is_own
@@ -523,13 +934,18 @@ impl Agent {
             .collect();
 
         if filtered_events.is_empty() {
-            self.emit(AgentEvent::Observation("No new events from skills.".to_string())).await;
+            self.emit(AgentEvent::Observation(
+                "No new events from skills.".to_string(),
+            ))
+            .await;
             return Ok(());
         }
 
-        self.emit(AgentEvent::Observation(
-            format!("Found {} new events to analyze", filtered_events.len())
-        )).await;
+        self.emit(AgentEvent::Observation(format!(
+            "Found {} new events to analyze",
+            filtered_events.len()
+        )))
+        .await;
 
         // Get working memory and chat context from database
         let (working_memory_context, chat_context) = {
@@ -545,23 +961,38 @@ impl Agent {
 
         // Reason about events using LLM with full context
         self.set_state(AgentVisualState::Thinking).await;
-        self.emit(AgentEvent::Observation("Asking LLM to analyze events...".to_string())).await;
+        self.emit(AgentEvent::Observation(
+            "Asking LLM to analyze events...".to_string(),
+        ))
+        .await;
 
         let decision = {
             let reasoning = self.reasoning.read().await;
-            reasoning.analyze_events_with_context(&filtered_events, &working_memory_context, &chat_context).await?
+            reasoning
+                .analyze_events_with_context(
+                    &filtered_events,
+                    &working_memory_context,
+                    &chat_context,
+                )
+                .await?
         };
 
         match decision {
-            reasoning::Decision::Reply { post_id, content, reasoning } => {
+            reasoning::Decision::Reply {
+                post_id,
+                content,
+                reasoning,
+            } => {
                 // Show reasoning trace
                 self.emit(AgentEvent::ReasoningTrace(reasoning)).await;
 
                 // Execute through the appropriate skill
                 self.set_state(AgentVisualState::Writing).await;
-                self.emit(AgentEvent::Observation(
-                    format!("Writing reply to event {}...", &post_id[..post_id.len().min(8)])
-                )).await;
+                self.emit(AgentEvent::Observation(format!(
+                    "Writing reply to event {}...",
+                    &post_id[..post_id.len().min(8)]
+                )))
+                .await;
 
                 // Find the source event to determine parent context
                 let source_event = filtered_events.iter().find(|e| {
@@ -587,11 +1018,16 @@ impl Agent {
                                         self.emit(AgentEvent::ActionTaken {
                                             action: format!("Reply via {}", skill.name()),
                                             result: message,
-                                        }).await;
+                                        })
+                                        .await;
                                         executed = true;
                                     }
                                     crate::skills::SkillResult::Error { message } => {
-                                        tracing::debug!("Skill '{}' could not execute reply: {}", skill.name(), message);
+                                        tracing::debug!(
+                                            "Skill '{}' could not execute reply: {}",
+                                            skill.name(),
+                                            message
+                                        );
                                         continue;
                                     }
                                 }
@@ -616,30 +1052,41 @@ impl Agent {
                     self.set_state(AgentVisualState::Happy).await;
                     sleep(Duration::from_secs(2)).await;
                 } else {
-                    self.emit(AgentEvent::Error("No skill could execute the reply".to_string())).await;
+                    self.emit(AgentEvent::Error(
+                        "No skill could execute the reply".to_string(),
+                    ))
+                    .await;
                     self.set_state(AgentVisualState::Confused).await;
                     // Still mark as processed to avoid retrying repeatedly
                     let mut state = self.state.write().await;
                     state.processed_events.insert(post_id.clone());
                 }
             }
-            reasoning::Decision::UpdateMemory { key, content, reasoning } => {
+            reasoning::Decision::UpdateMemory {
+                key,
+                content,
+                reasoning,
+            } => {
                 // Agent wants to update its working memory
                 self.emit(AgentEvent::ReasoningTrace(reasoning)).await;
-                self.emit(AgentEvent::Observation(
-                    format!("Updating working memory: {}...", key)
-                )).await;
+                self.emit(AgentEvent::Observation(format!(
+                    "Updating working memory: {}...",
+                    key
+                )))
+                .await;
 
                 let db_lock = self.database.read().await;
                 if let Some(ref db) = *db_lock {
                     if let Err(e) = db.set_working_memory(&key, &content) {
                         tracing::warn!("Failed to update working memory: {}", e);
-                        self.emit(AgentEvent::Error(format!("Failed to save memory: {}", e))).await;
+                        self.emit(AgentEvent::Error(format!("Failed to save memory: {}", e)))
+                            .await;
                     } else {
                         self.emit(AgentEvent::ActionTaken {
                             action: "Updated memory".to_string(),
                             result: format!("Key: {}", key),
-                        }).await;
+                        })
+                        .await;
                     }
                 }
 
@@ -650,15 +1097,25 @@ impl Agent {
                     state.processed_events.insert(id.clone());
                 }
             }
-            reasoning::Decision::ChatReply { content, reasoning, memory_update } => {
+            reasoning::Decision::ChatReply {
+                content,
+                reasoning,
+                memory_update,
+            } => {
                 // This shouldn't happen in run_cycle (it's for process_chat_messages)
                 // but handle it gracefully
                 self.emit(AgentEvent::ReasoningTrace(reasoning)).await;
-                tracing::warn!("Unexpected ChatReply decision in run_cycle, content: {}", content);
+                tracing::warn!(
+                    "Unexpected ChatReply decision in run_cycle, content: {}",
+                    content
+                );
             }
             reasoning::Decision::NoAction { reasoning } => {
                 self.emit(AgentEvent::ReasoningTrace(reasoning)).await;
-                self.emit(AgentEvent::Observation("No action needed at this time.".to_string())).await;
+                self.emit(AgentEvent::Observation(
+                    "No action needed at this time.".to_string(),
+                ))
+                .await;
 
                 // Mark all analyzed events as processed so we don't re-analyze them
                 let mut state = self.state.write().await;
@@ -669,7 +1126,10 @@ impl Agent {
                 let num_marked = filtered_events.len();
                 drop(state);
 
-                tracing::debug!("Marked {} events as processed (no action needed)", num_marked);
+                tracing::debug!(
+                    "Marked {} events as processed (no action needed)",
+                    num_marked
+                );
             }
         }
 
@@ -694,9 +1154,11 @@ impl Agent {
             return Ok(());
         }
 
-        self.emit(AgentEvent::Observation(
-            format!("Processing {} private message(s) from operator...", unprocessed_messages.len())
-        )).await;
+        self.emit(AgentEvent::Observation(format!(
+            "Processing {} private message(s) from operator...",
+            unprocessed_messages.len()
+        )))
+        .await;
         self.set_state(AgentVisualState::Thinking).await;
 
         // Get working memory context
@@ -712,11 +1174,17 @@ impl Agent {
         // Process the chat messages with the LLM
         let decision = {
             let reasoning = self.reasoning.read().await;
-            reasoning.process_chat(&unprocessed_messages, &working_memory_context).await?
+            reasoning
+                .process_chat(&unprocessed_messages, &working_memory_context)
+                .await?
         };
 
         match decision {
-            reasoning::Decision::ChatReply { content, reasoning, memory_update } => {
+            reasoning::Decision::ChatReply {
+                content,
+                reasoning,
+                memory_update,
+            } => {
                 self.emit(AgentEvent::ReasoningTrace(reasoning)).await;
 
                 // Save the agent's response to the chat
@@ -740,9 +1208,11 @@ impl Agent {
                             if let Err(e) = db.set_working_memory(&key, &value) {
                                 tracing::warn!("Failed to update working memory: {}", e);
                             } else {
-                                self.emit(AgentEvent::Observation(
-                                    format!("Also updated memory: {}", key)
-                                )).await;
+                                self.emit(AgentEvent::Observation(format!(
+                                    "Also updated memory: {}",
+                                    key
+                                )))
+                                .await;
                             }
                         }
                     }
@@ -751,7 +1221,8 @@ impl Agent {
                 self.emit(AgentEvent::ActionTaken {
                     action: "Replied to operator".to_string(),
                     result: format!("Response: {}...", &content[..content.len().min(50)]),
-                }).await;
+                })
+                .await;
                 self.set_state(AgentVisualState::Happy).await;
                 sleep(Duration::from_millis(500)).await;
             }
@@ -767,5 +1238,198 @@ impl Agent {
         }
 
         Ok(())
+    }
+}
+
+fn load_pending_checklist_items(path: &str) -> Result<Vec<String>> {
+    let raw = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    Ok(parse_pending_checklist_items(&raw))
+}
+
+fn load_memory_eval_trace_set(
+    trace_set_path: Option<&str>,
+) -> Result<crate::memory::eval::MemoryEvalTraceSet> {
+    match trace_set_path.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(path) => load_trace_set(Path::new(path)),
+        None => Ok(default_replay_trace_set()),
+    }
+}
+
+fn select_promotion_candidate_backend(
+    report: &MemoryEvalReport,
+    baseline_backend_id: &str,
+) -> Option<String> {
+    if let Some(winner) = report.winner.as_ref() {
+        if winner != baseline_backend_id {
+            return Some(winner.clone());
+        }
+    }
+
+    report
+        .candidates
+        .iter()
+        .filter(|c| c.backend_id != baseline_backend_id)
+        .max_by(|a, b| {
+            let a_get_pass = a.metrics.get_passed as f64 / a.metrics.get_checks.max(1) as f64;
+            let b_get_pass = b.metrics.get_passed as f64 / b.metrics.get_checks.max(1) as f64;
+
+            let a_key = (
+                ordered_score(a.metrics.recall_at_k),
+                ordered_score(a.metrics.recall_at_1),
+                ordered_score(a_get_pass),
+                std::cmp::Reverse(ordered_score(a.metrics.mean_check_ms)),
+            );
+            let b_key = (
+                ordered_score(b.metrics.recall_at_k),
+                ordered_score(b.metrics.recall_at_1),
+                ordered_score(b_get_pass),
+                std::cmp::Reverse(ordered_score(b.metrics.mean_check_ms)),
+            );
+            a_key.cmp(&b_key)
+        })
+        .map(|c| c.backend_id.clone())
+}
+
+fn parse_pending_checklist_items(markdown: &str) -> Vec<String> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            let pending = trimmed
+                .strip_prefix("- [ ] ")
+                .or_else(|| trimmed.strip_prefix("* [ ] "));
+            pending
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
+        .collect()
+}
+
+fn is_heartbeat_memory_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    ["heartbeat", "reminder", "todo", "task", "check"]
+        .iter()
+        .any(|needle| key.contains(needle))
+}
+
+fn collect_heartbeat_memory_hints(entries: &[WorkingMemoryEntry]) -> Vec<String> {
+    entries
+        .iter()
+        .filter(|entry| is_heartbeat_memory_key(&entry.key) && !entry.content.trim().is_empty())
+        .map(|entry| {
+            format!(
+                "{}: {}",
+                entry.key,
+                truncate_for_event(entry.content.trim(), 140)
+            )
+        })
+        .collect()
+}
+
+fn truncate_for_event(input: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (i, ch) in input.chars().enumerate() {
+        if i >= max_chars {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn ordered_score(v: f64) -> i64 {
+    (v * 1_000_000.0) as i64
+}
+
+fn agentic_api_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{}/v1", trimmed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_unchecked_markdown_checklist_items() {
+        let markdown = r#"
+# Heartbeat
+- [ ] check backups
+- [x] already done
+* [ ] inspect logs
+not a checklist item
+"#;
+
+        let items = parse_pending_checklist_items(markdown);
+        assert_eq!(items, vec!["check backups", "inspect logs"]);
+    }
+
+    #[test]
+    fn filters_working_memory_for_heartbeat_like_keys() {
+        let entries = vec![
+            WorkingMemoryEntry {
+                key: "project_todo".to_string(),
+                content: "ship heartbeat".to_string(),
+                updated_at: Utc::now(),
+            },
+            WorkingMemoryEntry {
+                key: "notes".to_string(),
+                content: "general scratchpad".to_string(),
+                updated_at: Utc::now(),
+            },
+            WorkingMemoryEntry {
+                key: "reminder_daily".to_string(),
+                content: "check disk space".to_string(),
+                updated_at: Utc::now(),
+            },
+        ];
+
+        let hints = collect_heartbeat_memory_hints(&entries);
+        assert_eq!(hints.len(), 2);
+        assert!(hints.iter().any(|h| h.contains("project_todo")));
+        assert!(hints.iter().any(|h| h.contains("reminder_daily")));
+    }
+
+    #[test]
+    fn normalizes_agentic_api_url() {
+        assert_eq!(
+            agentic_api_url("http://localhost:11434"),
+            "http://localhost:11434/v1"
+        );
+        assert_eq!(
+            agentic_api_url("http://localhost:11434/v1"),
+            "http://localhost:11434/v1"
+        );
+        assert_eq!(
+            agentic_api_url("http://localhost:11434/v1/"),
+            "http://localhost:11434/v1"
+        );
+    }
+
+    #[test]
+    fn picks_non_baseline_memory_promotion_candidate() {
+        let traces = default_replay_trace_set();
+        let report = evaluate_trace_set(
+            &traces,
+            &[
+                EvalBackendKind::KvV1,
+                EvalBackendKind::FtsV2,
+                EvalBackendKind::EpisodicV3,
+            ],
+        )
+        .unwrap();
+
+        let candidate = select_promotion_candidate_backend(&report, "kv_v1").unwrap();
+        assert_ne!(candidate, "kv_v1");
     }
 }

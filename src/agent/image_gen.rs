@@ -26,7 +26,9 @@ impl ImageGenerator {
 
     /// Generate an image based on a prompt and context
     pub async fn generate_image(&self, prompt: &str) -> Result<PathBuf> {
-        let workflow = self.workflow.as_ref()
+        let workflow = self
+            .workflow
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No workflow configured"))?;
 
         // Prepare inputs for the workflow
@@ -55,17 +57,26 @@ impl ImageGenerator {
         let executable_workflow = workflow.prepare_for_execution(&inputs)?;
 
         // Queue prompt
-        let prompt_id = self.client.queue_prompt(executable_workflow).await
+        let prompt_id = self
+            .client
+            .queue_prompt(executable_workflow)
+            .await
             .context("Failed to queue prompt")?;
 
         tracing::info!("Queued image generation: prompt_id={}", prompt_id);
 
         // Wait for completion (timeout: 5 minutes)
-        let image_info = self.client.wait_for_completion(&prompt_id, 300).await
+        let image_info = self
+            .client
+            .wait_for_completion(&prompt_id, 300)
+            .await
             .context("Failed to wait for completion")?;
 
         // Download image
-        let image_path = self.client.download_image(&image_info).await
+        let image_path = self
+            .client
+            .download_image(&image_info)
+            .await
             .context("Failed to download generated image")?;
 
         tracing::info!("Generated image saved to: {:?}", image_path);
@@ -74,14 +85,21 @@ impl ImageGenerator {
     }
 
     /// Generate a prompt from thread context using LLM
-    pub async fn generate_prompt_from_context(&self, context: &str, llm_client: &crate::agent::reasoning::ReasoningEngine) -> Result<String> {
+    pub async fn generate_prompt_from_context(
+        &self,
+        context: &str,
+        llm_client: &crate::agent::reasoning::ReasoningEngine,
+    ) -> Result<String> {
         // For now, use a simple heuristic
         // TODO: Use LLM to craft better prompts from context
 
         let prompt = if context.len() < 100 {
             format!("A visual representation of: {}", context)
         } else {
-            format!("A visual representation of the following discussion: {}...", &context[..100])
+            format!(
+                "A visual representation of the following discussion: {}...",
+                &context[..100]
+            )
         };
 
         Ok(prompt)

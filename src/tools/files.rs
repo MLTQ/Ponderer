@@ -69,11 +69,19 @@ impl Tool for ReadFileTool {
         // Check file exists and size
         let metadata = match tokio::fs::metadata(&path).await {
             Ok(m) => m,
-            Err(e) => return Ok(ToolOutput::Error(format!("Cannot access '{}': {}", path_str, e))),
+            Err(e) => {
+                return Ok(ToolOutput::Error(format!(
+                    "Cannot access '{}': {}",
+                    path_str, e
+                )))
+            }
         };
 
         if metadata.is_dir() {
-            return Ok(ToolOutput::Error(format!("'{}' is a directory, use list_directory instead", path_str)));
+            return Ok(ToolOutput::Error(format!(
+                "'{}' is a directory, use list_directory instead",
+                path_str
+            )));
         }
 
         if metadata.len() > MAX_READ_BYTES {
@@ -114,7 +122,12 @@ impl Tool for ReadFileTool {
 
         let mut result = selected.join("\n");
         if end < lines.len() {
-            result.push_str(&format!("\n\n[Showing lines {}-{} of {}]", start + 1, end, lines.len()));
+            result.push_str(&format!(
+                "\n\n[Showing lines {}-{} of {}]",
+                start + 1,
+                end,
+                lines.len()
+            ));
         }
 
         Ok(ToolOutput::Text(result))
@@ -185,7 +198,10 @@ impl Tool for WriteFileTool {
         // Create parent directories
         if let Some(parent) = std::path::Path::new(&path).parent() {
             if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                return Ok(ToolOutput::Error(format!("Failed to create directories: {}", e)));
+                return Ok(ToolOutput::Error(format!(
+                    "Failed to create directories: {}",
+                    e
+                )));
             }
         }
 
@@ -198,7 +214,10 @@ impl Tool for WriteFileTool {
                     path_str
                 )))
             }
-            Err(e) => Ok(ToolOutput::Error(format!("Failed to write '{}': {}", path_str, e))),
+            Err(e) => Ok(ToolOutput::Error(format!(
+                "Failed to write '{}': {}",
+                path_str, e
+            ))),
         }
     }
 
@@ -250,20 +269,26 @@ impl Tool for ListDirectoryTool {
     }
 
     async fn execute(&self, params: serde_json::Value, ctx: &ToolContext) -> Result<ToolOutput> {
-        let path_str = params["path"]
-            .as_str()
-            .unwrap_or(&ctx.working_directory);
+        let path_str = params["path"].as_str().unwrap_or(&ctx.working_directory);
         let recursive = params["recursive"].as_bool().unwrap_or(false);
 
         let path = resolve_path(path_str, &ctx.working_directory);
 
         let metadata = match tokio::fs::metadata(&path).await {
             Ok(m) => m,
-            Err(e) => return Ok(ToolOutput::Error(format!("Cannot access '{}': {}", path_str, e))),
+            Err(e) => {
+                return Ok(ToolOutput::Error(format!(
+                    "Cannot access '{}': {}",
+                    path_str, e
+                )))
+            }
         };
 
         if !metadata.is_dir() {
-            return Ok(ToolOutput::Error(format!("'{}' is not a directory", path_str)));
+            return Ok(ToolOutput::Error(format!(
+                "'{}' is not a directory",
+                path_str
+            )));
         }
 
         let max_depth = if recursive { 3 } else { 1 };
@@ -339,18 +364,31 @@ impl Tool for PatchFileTool {
         };
         let old_string = match params["old_string"].as_str() {
             Some(s) => s,
-            None => return Ok(ToolOutput::Error("Missing 'old_string' parameter".to_string())),
+            None => {
+                return Ok(ToolOutput::Error(
+                    "Missing 'old_string' parameter".to_string(),
+                ))
+            }
         };
         let new_string = match params["new_string"].as_str() {
             Some(s) => s,
-            None => return Ok(ToolOutput::Error("Missing 'new_string' parameter".to_string())),
+            None => {
+                return Ok(ToolOutput::Error(
+                    "Missing 'new_string' parameter".to_string(),
+                ))
+            }
         };
 
         let path = resolve_path(path_str, &ctx.working_directory);
 
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
-            Err(e) => return Ok(ToolOutput::Error(format!("Cannot read '{}': {}", path_str, e))),
+            Err(e) => {
+                return Ok(ToolOutput::Error(format!(
+                    "Cannot read '{}': {}",
+                    path_str, e
+                )))
+            }
         };
 
         let match_count = content.matches(old_string).count();
@@ -376,7 +414,10 @@ impl Tool for PatchFileTool {
                 tracing::info!("PatchFileTool: patched {}", path);
                 Ok(ToolOutput::Text(format!("Patched '{}'", path_str)))
             }
-            Err(e) => Ok(ToolOutput::Error(format!("Failed to write '{}': {}", path_str, e))),
+            Err(e) => Ok(ToolOutput::Error(format!(
+                "Failed to write '{}': {}",
+                path_str, e
+            ))),
         }
     }
 
@@ -523,7 +564,8 @@ mod tests {
         std::fs::write(&file_path, "a\nb\nc\nd\ne\n").unwrap();
 
         let tool = ReadFileTool::new();
-        let params = serde_json::json!({"path": file_path.to_string_lossy(), "offset": 2, "limit": 2});
+        let params =
+            serde_json::json!({"path": file_path.to_string_lossy(), "offset": 2, "limit": 2});
         let result = tool.execute(params, &test_ctx()).await.unwrap();
 
         match result {
@@ -653,7 +695,10 @@ mod tests {
 
     #[test]
     fn test_resolve_path_relative() {
-        assert_eq!(resolve_path("src/main.rs", "/home/user/project"), "/home/user/project/src/main.rs");
+        assert_eq!(
+            resolve_path("src/main.rs", "/home/user/project"),
+            "/home/user/project/src/main.rs"
+        );
     }
 
     #[test]
