@@ -101,6 +101,24 @@ impl Default for ComfyUIConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CapabilityProfileOverride {
+    #[serde(default)]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub disallowed_tools: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CapabilityProfileConfig {
+    #[serde(default)]
+    pub private_chat: CapabilityProfileOverride,
+    #[serde(default)]
+    pub skill_events: CapabilityProfileOverride,
+    #[serde(default)]
+    pub heartbeat: CapabilityProfileOverride,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     // Graphchan connection (for graphchan skill)
@@ -141,6 +159,9 @@ pub struct AgentConfig {
 
     #[serde(default)]
     pub respond_to: RespondTo,
+
+    #[serde(default)]
+    pub capability_profiles: CapabilityProfileConfig,
 
     // Self-reflection and evolution
     #[serde(default)]
@@ -273,6 +294,7 @@ impl Default for AgentConfig {
             memory_evolution_interval_hours: default_memory_evolution_interval_hours(),
             memory_eval_trace_set_path: None,
             respond_to: RespondTo::default(),
+            capability_profiles: CapabilityProfileConfig::default(),
             enable_self_reflection: false,
             reflection_interval_hours: default_reflection_interval(),
             reflection_model: None,

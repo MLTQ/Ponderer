@@ -6,6 +6,7 @@ mod config;
 mod database;
 mod llm_client;
 mod memory;
+mod presence;
 mod skills;
 mod tools;
 mod ui;

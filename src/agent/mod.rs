@@ -1,5 +1,8 @@
 pub mod actions;
+pub mod capability_profiles;
+pub mod concerns;
 pub mod image_gen;
+pub mod journal;
 pub mod reasoning;
 pub mod trajectory;
 
@@ -14,6 +17,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 
+use crate::agent::capability_profiles::{build_tool_context_for_profile, AgentCapabilityProfile};
 use crate::config::AgentConfig;
 use crate::database::{AgentDatabase, ChatTurnPhase};
 use crate::llm_client::{LlmClient, Message as LlmMessage};
@@ -24,8 +28,8 @@ use crate::memory::eval::{
 use crate::memory::WorkingMemoryEntry;
 use crate::skills::{Skill, SkillContext, SkillEvent};
 use crate::tools::agentic::{AgenticConfig, AgenticLoop, ToolCallRecord};
+use crate::tools::ToolOutput;
 use crate::tools::ToolRegistry;
-use crate::tools::{ToolContext, ToolOutput};
 
 const HEARTBEAT_LAST_RUN_STATE_KEY: &str = "heartbeat_last_run_at";
 const MEMORY_EVOLUTION_LAST_RUN_STATE_KEY: &str = "memory_evolution_last_run_at";
@@ -417,28 +421,15 @@ impl Agent {
     /// It looks for pending checklist items from HEARTBEAT.md-style markdown
     /// and reminder-like working-memory entries before invoking the tool-calling loop.
     async fn maybe_run_heartbeat(&self) {
-        let (
-            enabled,
-            heartbeat_interval_mins,
-            heartbeat_checklist_path,
-            llm_api_url,
-            llm_model,
-            llm_api_key,
-            system_prompt,
-            username,
-        ) = {
-            let config = self.config.read().await;
-            (
-                config.enable_heartbeat,
-                config.heartbeat_interval_mins.max(1),
-                config.heartbeat_checklist_path.clone(),
-                config.llm_api_url.clone(),
-                config.llm_model.clone(),
-                config.llm_api_key.clone(),
-                config.system_prompt.clone(),
-                config.username.clone(),
-            )
-        };
+        let config_snapshot = { self.config.read().await.clone() };
+        let enabled = config_snapshot.enable_heartbeat;
+        let heartbeat_interval_mins = config_snapshot.heartbeat_interval_mins.max(1);
+        let heartbeat_checklist_path = config_snapshot.heartbeat_checklist_path.clone();
+        let llm_api_url = config_snapshot.llm_api_url.clone();
+        let llm_model = config_snapshot.llm_model.clone();
+        let llm_api_key = config_snapshot.llm_api_key.clone();
+        let system_prompt = config_snapshot.system_prompt.clone();
+        let username = config_snapshot.username.clone();
 
         if !enabled {
             return;
@@ -550,13 +541,12 @@ impl Agent {
         let working_directory = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".to_string());
-        let tool_ctx = ToolContext {
+        let tool_ctx = build_tool_context_for_profile(
+            &config_snapshot,
+            AgentCapabilityProfile::Heartbeat,
             working_directory,
             username,
-            autonomous: true,
-            allowed_tools: None,
-            disallowed_tools: Vec::new(),
-        };
+        );
 
         match agentic_loop
             .run(&heartbeat_system_prompt, &user_message, &tool_ctx)
@@ -1003,15 +993,11 @@ impl Agent {
         ))
         .await;
 
-        let (llm_api_url, llm_model, llm_api_key, system_prompt) = {
-            let config = self.config.read().await;
-            (
-                config.llm_api_url.clone(),
-                config.llm_model.clone(),
-                config.llm_api_key.clone(),
-                config.system_prompt.clone(),
-            )
-        };
+        let config_snapshot = { self.config.read().await.clone() };
+        let llm_api_url = config_snapshot.llm_api_url.clone();
+        let llm_model = config_snapshot.llm_model.clone();
+        let llm_api_key = config_snapshot.llm_api_key.clone();
+        let system_prompt = config_snapshot.system_prompt.clone();
         let loop_config = AgenticConfig {
             max_iterations: 8,
             api_url: agentic_api_url(&llm_api_url),
@@ -1021,15 +1007,14 @@ impl Agent {
             max_tokens: 1536,
         };
         let agentic_loop = AgenticLoop::new(loop_config, self.tool_registry.clone());
-        let tool_ctx = ToolContext {
-            working_directory: std::env::current_dir()
+        let tool_ctx = build_tool_context_for_profile(
+            &config_snapshot,
+            AgentCapabilityProfile::SkillEvents,
+            std::env::current_dir()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| ".".to_string()),
-            username: username.clone(),
-            autonomous: true,
-            allowed_tools: None,
-            disallowed_tools: Vec::new(),
-        };
+            username.clone(),
+        );
         let skill_system_prompt = format!(
             "{}\n\nYou are processing external skill events. Decide whether to take action.\nUse tools when needed.\nIf replying on Graphchan, call tool `graphchan_skill` with action=`reply` and params containing `post_id` (or `event_id`) and `content`; include `thread_id` when known.\nYou may use `write_memory` for durable notes and `search_memory` for recall.\nIf no action is needed, explain briefly and return.",
             system_prompt
@@ -1160,7 +1145,7 @@ impl Agent {
         .await;
         self.set_state(AgentVisualState::Thinking).await;
 
-        let (working_memory_context, llm_api_url, llm_model, llm_api_key, system_prompt, username) = {
+        let (working_memory_context, config_snapshot) = {
             let db_lock = self.database.read().await;
             let wm = if let Some(ref db) = *db_lock {
                 db.get_working_memory_context().unwrap_or_default()
@@ -1169,15 +1154,13 @@ impl Agent {
             };
 
             let config = self.config.read().await;
-            (
-                wm,
-                config.llm_api_url.clone(),
-                config.llm_model.clone(),
-                config.llm_api_key.clone(),
-                config.system_prompt.clone(),
-                config.username.clone(),
-            )
+            (wm, config.clone())
         };
+        let llm_api_url = config_snapshot.llm_api_url.clone();
+        let llm_model = config_snapshot.llm_model.clone();
+        let llm_api_key = config_snapshot.llm_api_key.clone();
+        let system_prompt = config_snapshot.system_prompt.clone();
+        let username = config_snapshot.username.clone();
 
         let loop_config = AgenticConfig {
             max_iterations: 10,
@@ -1188,18 +1171,14 @@ impl Agent {
             max_tokens: 2048,
         };
         let agentic_loop = AgenticLoop::new(loop_config, self.tool_registry.clone());
-        let tool_ctx = ToolContext {
-            working_directory: std::env::current_dir()
+        let tool_ctx = build_tool_context_for_profile(
+            &config_snapshot,
+            AgentCapabilityProfile::PrivateChat,
+            std::env::current_dir()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| ".".to_string()),
             username,
-            autonomous: false,
-            allowed_tools: None,
-            disallowed_tools: vec![
-                "graphchan_skill".to_string(),
-                "post_to_graphchan".to_string(),
-            ],
-        };
+        );
 
         let chat_system_prompt = format!(
             "{}\n\nYou are in direct operator chat mode. Use tools when they improve correctness or save effort.\nYou may run multiple internal turns before yielding back to the operator.\nDo not use Graphchan posting/reply tools in private chat.\nEvery response MUST end with a turn-control JSON block in this exact envelope:\n{}\n{{\"decision\":\"continue|yield\",\"status\":\"still_working|done|blocked\",\"needs_user_input\":true|false,\"user_message\":\"operator-facing text\",\"reason\":\"short internal rationale\"}}\n{}\nChoose decision='continue' only if you can make immediate progress now without user clarification.\nChoose decision='yield' when done, blocked, or waiting on user input.",

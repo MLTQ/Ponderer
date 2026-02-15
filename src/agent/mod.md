@@ -9,6 +9,10 @@ Coordinates the core autonomous agent loop: polling skills, reasoning over event
 - **Does**: Owns runtime dependencies (skills, tools, config, database, reasoning engines) and exposes lifecycle operations (`new`, `run_loop`, `reload_config`, `toggle_pause`)
 - **Interacts with**: `config::AgentConfig`, `database::AgentDatabase`, `skills::*`, `tools::ToolRegistry`, `agent::reasoning`, `agent::trajectory`
 
+### Living Loop foundation modules (`journal`, `concerns`)
+- **Does**: Provide typed records for journal entries and concern tracking used by new ll.1 database tables
+- **Interacts with**: `database.rs` CRUD/persistence methods; future ambient/orientation loop work
+
 ### `AgentState`
 - **Does**: Tracks in-memory runtime state (visual mode, pause flag, rate counters, processed event IDs)
 - **Interacts with**: `run_loop`, `run_cycle`, and UI-facing event emission
@@ -38,6 +42,10 @@ Coordinates the core autonomous agent loop: polling skills, reasoning over event
 - **Interacts with**: `database::chat_messages`, `database::chat_conversations`, `database::chat_turns`, `database::chat_turn_tool_calls`, `tools::agentic::AgenticLoop::run_with_history_streaming_and_tool_events`, `ToolRegistry`
 - **Rationale**: Uses continuation hints (not synthetic operator messages) for multi-turn autonomy, scopes private-chat tools away from Graphchan posting, compacts long sessions through persisted summary snapshots, and only persists the final yielded assistant reply to avoid duplicate/confusing intermediate chat bubbles.
 
+### `capability_profiles`
+- **Does**: Resolves explicit loop capability policies (`private_chat`, `skill_events`, `heartbeat`) into per-loop `ToolContext` objects with autonomous mode and allow/deny tool lists
+- **Interacts with**: `config::AgentConfig.capability_profiles`, `tools::ToolContext`
+
 ### Persona evolution helpers
 - **Does**: Capture persona snapshots and run trajectory inference on schedule
 - **Interacts with**: `agent::trajectory`, `database::persona_history`, reflection timestamps in `agent_state`
@@ -55,6 +63,7 @@ Coordinates the core autonomous agent loop: polling skills, reasoning over event
 | `database.rs` | Chat and memory APIs are available and synchronous; private chat relies on conversation-scoped context plus turn lifecycle APIs (`begin_chat_turn`, `record_chat_turn_tool_call`, `complete_chat_turn`, `fail_chat_turn`, `add_chat_message_in_turn`) | Changing DB API names, turn-state semantics, or message persistence order |
 | `tools/mod.rs` | `ToolRegistry` can be shared and used in autonomous context, including bridged skill tools | Removing registry injection or bridged tool names used by prompts |
 | `tools/agentic.rs` | `AgenticLoop` accepts OpenAI-compatible endpoint and ToolContext for autonomous runs | Changing loop constructor/run signatures |
+| `agent/capability_profiles.rs` | Loop context policies are resolved centrally and applied consistently across heartbeat, skill events, and private chat | Bypassing policy resolver or changing profile semantics |
 | `memory/eval.rs` | Replay evaluation functions remain deterministic and serializable | Breaking report schema or candidate IDs |
 | `ui/chat.rs` | Embedded metadata block delimiters remain stable (`[tool_calls]`, `[thinking]`) | Changing envelope formats without parser update |
 | `tools/comfy.rs` | Tool JSON with `media` arrays is transformed into chat-visible media payloads | Changing media extraction shape in formatter |
@@ -69,7 +78,7 @@ Coordinates the core autonomous agent loop: polling skills, reasoning over event
 - Turn-control parsing treats visible assistant text as authoritative; block `user_message` is only fallback when visible text is empty and does not resemble a hallucinated `User:`/`Operator:` transcript.
 - Tool-call progress is streamed as events during a turn so the UI can show real-time execution output (for example shell output snippets) before final reply persistence.
 - Each autonomous private-chat turn is persisted in DB before/after execution, including tool-call lineage and terminal state (`completed`, `awaiting_approval`, or `failed`), but only the final yielded assistant message is added to chat history.
-- Private chat `ToolContext` explicitly blocks Graphchan posting/reply tools so forum actions stay in skill-event flows.
+- Tool access is now enforced by explicit capability profiles per loop (`private_chat`, `skill_events`, `heartbeat`), with optional config overrides for allow/deny lists.
 - Operator messages and per-turn agent outcomes now append to daily memory log keys (`activity-log-YYYY-MM-DD`) for longitudinal context.
 - Heartbeat mode is guarded by config + due-time checks and is intentionally quiet when no pending tasks/reminders are found.
 - Memory evolution scheduling is heartbeat-triggered but independently rate-limited by its own interval key in `agent_state`.

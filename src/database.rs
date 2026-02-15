@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
+use crate::agent::concerns::{Concern, ConcernContext, ConcernType, Salience};
+use crate::agent::journal::{JournalContext, JournalEntry, JournalEntryType, JournalMood};
 use crate::memory::archive::{
     evaluate_promotion_policy, MemoryDesignArchiveEntry, MemoryEvalRunRecord,
     MemoryPromotionDecisionRecord, MemoryPromotionPolicy, PromotionMetricsSnapshot,
@@ -198,6 +200,32 @@ pub struct ChatTurnToolCall {
     pub arguments_json: String,
     pub output_text: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrientationSnapshotRecord {
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub user_state: serde_json::Value,
+    pub disposition: String,
+    pub synthesis: String,
+    pub salience_map: serde_json::Value,
+    pub anomalies: serde_json::Value,
+    pub pending_thoughts: serde_json::Value,
+    pub mood_valence: Option<f32>,
+    pub mood_arousal: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingThoughtRecord {
+    pub id: String,
+    pub content: String,
+    pub context: Option<String>,
+    pub priority: f32,
+    pub relates_to: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub surfaced_at: Option<DateTime<Utc>>,
+    pub dismissed_at: Option<DateTime<Utc>>,
 }
 
 pub struct AgentDatabase {
@@ -562,6 +590,74 @@ impl AgentDatabase {
             [],
         )?;
 
+        // Living Loop foundation: private journal entries.
+        conn.execute(
+            r#"CREATE TABLE IF NOT EXISTS journal_entries (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                entry_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                trigger TEXT,
+                user_state_at_time TEXT,
+                time_of_day TEXT,
+                related_concerns TEXT,
+                mood_valence REAL,
+                mood_arousal REAL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )"#,
+            [],
+        )?;
+
+        // Living Loop foundation: ongoing concerns.
+        conn.execute(
+            r#"CREATE TABLE IF NOT EXISTS concerns (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                last_touched TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                concern_type TEXT NOT NULL,
+                salience TEXT NOT NULL,
+                my_thoughts TEXT,
+                related_memory_keys TEXT,
+                context TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )"#,
+            [],
+        )?;
+
+        // Living Loop foundation: orientation snapshots for debugging/analysis.
+        conn.execute(
+            r#"CREATE TABLE IF NOT EXISTS orientation_snapshots (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                user_state TEXT NOT NULL,
+                disposition TEXT NOT NULL,
+                synthesis TEXT NOT NULL,
+                salience_map TEXT,
+                anomalies TEXT,
+                pending_thoughts TEXT,
+                mood_valence REAL,
+                mood_arousal REAL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )"#,
+            [],
+        )?;
+
+        // Living Loop foundation: queued thoughts to surface later.
+        conn.execute(
+            r#"CREATE TABLE IF NOT EXISTS pending_thoughts_queue (
+                id TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                context TEXT,
+                priority REAL NOT NULL DEFAULT 0.5,
+                relates_to TEXT,
+                created_at TEXT NOT NULL,
+                surfaced_at TEXT,
+                dismissed_at TEXT
+            )"#,
+            [],
+        )?;
+
         self.ensure_chat_messages_conversation_column(&conn)?;
         self.ensure_chat_conversations_runtime_columns(&conn)?;
         self.ensure_default_chat_session(&conn)?;
@@ -600,6 +696,30 @@ impl AgentDatabase {
         )?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_turn_tool_calls_turn_idx ON chat_turn_tool_calls(turn_id, call_index ASC)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_journal_timestamp ON journal_entries(timestamp DESC)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_journal_type ON journal_entries(entry_type)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_concerns_salience ON concerns(salience)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_concerns_last_touched ON concerns(last_touched DESC)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orientation_timestamp ON orientation_snapshots(timestamp DESC)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_unsurfaced ON pending_thoughts_queue(surfaced_at) WHERE surfaced_at IS NULL",
             [],
         )?;
 
@@ -1483,6 +1603,586 @@ impl AgentDatabase {
             context.push_str(&format!("### {}\n{}\n\n", entry.key, entry.content));
         }
         Ok(context)
+    }
+
+    // ========================================================================
+    // Living Loop Foundation - Journal
+    // ========================================================================
+
+    pub fn add_journal_entry(&self, entry: &JournalEntry) -> Result<()> {
+        let related_concerns_json = serde_json::to_string(&entry.related_concerns)
+            .context("Failed to serialize journal related concerns")?;
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO journal_entries
+             (id, timestamp, entry_type, content, trigger, user_state_at_time, time_of_day,
+              related_concerns, mood_valence, mood_arousal, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                entry.id,
+                entry.timestamp.to_rfc3339(),
+                entry.entry_type.as_db_str(),
+                entry.content,
+                entry.context.trigger,
+                entry.context.user_state_at_time,
+                entry.context.time_of_day,
+                related_concerns_json,
+                entry.mood_at_time.as_ref().map(|m| m.valence),
+                entry.mood_at_time.as_ref().map(|m| m.arousal),
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_recent_journal(&self, limit: usize) -> Result<Vec<JournalEntry>> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, entry_type, content, trigger, user_state_at_time, time_of_day,
+                    related_concerns, mood_valence, mood_arousal
+             FROM journal_entries
+             ORDER BY timestamp DESC
+             LIMIT ?1",
+        )?;
+
+        let entries = stmt
+            .query_map([limit.max(1)], |row| {
+                let timestamp_raw: String = row.get(1)?;
+                let related_raw: Option<String> = row.get(7)?;
+                let related_concerns = related_raw
+                    .as_deref()
+                    .map(serde_json::from_str::<Vec<String>>)
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .unwrap_or_default();
+                let mood_valence: Option<f32> = row.get(8)?;
+                let mood_arousal: Option<f32> = row.get(9)?;
+
+                Ok(JournalEntry {
+                    id: row.get(0)?,
+                    timestamp: timestamp_raw.parse().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                    entry_type: JournalEntryType::from_db(&row.get::<_, String>(2)?),
+                    content: row.get(3)?,
+                    context: JournalContext {
+                        trigger: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                        user_state_at_time: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                        time_of_day: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                    },
+                    related_concerns,
+                    mood_at_time: match (mood_valence, mood_arousal) {
+                        (Some(valence), Some(arousal)) => Some(JournalMood { valence, arousal }),
+                        _ => None,
+                    },
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(entries)
+    }
+
+    pub fn get_journal_for_context(&self, max_tokens: usize) -> Result<String> {
+        if max_tokens == 0 {
+            return Ok(String::new());
+        }
+
+        let entries = self.get_recent_journal(64)?;
+        if entries.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut token_budget = 0usize;
+        let mut out = String::from("## Recent Journal Notes\n\n");
+        for entry in entries {
+            let line = format!(
+                "- [{}] ({}) {}\n",
+                entry.timestamp.format("%Y-%m-%d %H:%M"),
+                entry.entry_type.as_db_str(),
+                entry.content.trim()
+            );
+            let est_tokens = line.split_whitespace().count();
+            if token_budget + est_tokens > max_tokens {
+                break;
+            }
+            token_budget += est_tokens;
+            out.push_str(&line);
+        }
+
+        if token_budget == 0 {
+            Ok(String::new())
+        } else {
+            Ok(out)
+        }
+    }
+
+    pub fn search_journal(&self, query: &str, limit: usize) -> Result<Vec<JournalEntry>> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return self.get_recent_journal(limit.max(1));
+        }
+
+        let like_pattern = format!("%{}%", trimmed.to_ascii_lowercase());
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, entry_type, content, trigger, user_state_at_time, time_of_day,
+                    related_concerns, mood_valence, mood_arousal
+             FROM journal_entries
+             WHERE LOWER(content) LIKE ?1 OR LOWER(COALESCE(trigger, '')) LIKE ?1
+             ORDER BY timestamp DESC
+             LIMIT ?2",
+        )?;
+
+        let entries = stmt
+            .query_map(params![like_pattern, limit.max(1)], |row| {
+                let timestamp_raw: String = row.get(1)?;
+                let related_raw: Option<String> = row.get(7)?;
+                let related_concerns = related_raw
+                    .as_deref()
+                    .map(serde_json::from_str::<Vec<String>>)
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .unwrap_or_default();
+                let mood_valence: Option<f32> = row.get(8)?;
+                let mood_arousal: Option<f32> = row.get(9)?;
+
+                Ok(JournalEntry {
+                    id: row.get(0)?,
+                    timestamp: timestamp_raw.parse().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                    entry_type: JournalEntryType::from_db(&row.get::<_, String>(2)?),
+                    content: row.get(3)?,
+                    context: JournalContext {
+                        trigger: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                        user_state_at_time: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                        time_of_day: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                    },
+                    related_concerns,
+                    mood_at_time: match (mood_valence, mood_arousal) {
+                        (Some(valence), Some(arousal)) => Some(JournalMood { valence, arousal }),
+                        _ => None,
+                    },
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(entries)
+    }
+
+    // ========================================================================
+    // Living Loop Foundation - Concerns
+    // ========================================================================
+
+    pub fn save_concern(&self, concern: &Concern) -> Result<()> {
+        let concern_type_json = serde_json::to_string(&concern.concern_type)
+            .context("Failed to serialize concern type")?;
+        let related_keys_json = serde_json::to_string(&concern.related_memory_keys)
+            .context("Failed to serialize concern related memory keys")?;
+        let context_json = serde_json::to_string(&concern.context)
+            .context("Failed to serialize concern context")?;
+
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO concerns
+             (id, created_at, last_touched, summary, concern_type, salience, my_thoughts,
+              related_memory_keys, context, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                concern.id,
+                concern.created_at.to_rfc3339(),
+                concern.last_touched.to_rfc3339(),
+                concern.summary,
+                concern_type_json,
+                concern.salience.as_db_str(),
+                concern.my_thoughts,
+                related_keys_json,
+                context_json,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_concern(&self, id: &str) -> Result<Option<Concern>> {
+        let conn = self.lock_conn()?;
+        let result = conn.query_row(
+            "SELECT id, created_at, last_touched, summary, concern_type, salience, my_thoughts,
+                    related_memory_keys, context
+             FROM concerns
+             WHERE id = ?1",
+            [id],
+            |row| {
+                let created_raw: String = row.get(1)?;
+                let touched_raw: String = row.get(2)?;
+                let concern_type_raw: String = row.get(4)?;
+                let salience_raw: String = row.get(5)?;
+                let related_raw: Option<String> = row.get(7)?;
+                let context_raw: Option<String> = row.get(8)?;
+
+                let concern_type: ConcernType =
+                    serde_json::from_str(&concern_type_raw).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            4,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                let related_memory_keys = related_raw
+                    .as_deref()
+                    .map(serde_json::from_str::<Vec<String>>)
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .unwrap_or_default();
+                let context: ConcernContext = context_raw
+                    .as_deref()
+                    .map(serde_json::from_str::<ConcernContext>)
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            8,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .unwrap_or_default();
+
+                Ok(Concern {
+                    id: row.get(0)?,
+                    created_at: created_raw.parse().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                    last_touched: touched_raw.parse().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                    summary: row.get(3)?,
+                    concern_type,
+                    salience: Salience::from_db(&salience_raw),
+                    my_thoughts: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                    related_memory_keys,
+                    context,
+                })
+            },
+        );
+
+        match result {
+            Ok(concern) => Ok(Some(concern)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn get_active_concerns(&self) -> Result<Vec<Concern>> {
+        let ids = {
+            let conn = self.lock_conn()?;
+            let mut stmt = conn.prepare(
+                "SELECT id
+                 FROM concerns
+                 WHERE salience IN (?1, ?2)
+                 ORDER BY last_touched DESC",
+            )?;
+            let rows = stmt.query_map(
+                params![
+                    Salience::Active.as_db_str(),
+                    Salience::Monitoring.as_db_str()
+                ],
+                |row| row.get::<_, String>(0),
+            )?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut concerns = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(concern) = self.get_concern(&id)? {
+                concerns.push(concern);
+            }
+        }
+        Ok(concerns)
+    }
+
+    pub fn get_all_concerns(&self) -> Result<Vec<Concern>> {
+        let ids = {
+            let conn = self.lock_conn()?;
+            let mut stmt = conn.prepare("SELECT id FROM concerns ORDER BY last_touched DESC")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut concerns = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(concern) = self.get_concern(&id)? {
+                concerns.push(concern);
+            }
+        }
+        Ok(concerns)
+    }
+
+    pub fn update_concern_salience(&self, id: &str, salience: Salience) -> Result<()> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "UPDATE concerns
+             SET salience = ?2, updated_at = ?3
+             WHERE id = ?1",
+            params![id, salience.as_db_str(), Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn touch_concern(&self, id: &str, reason: &str) -> Result<()> {
+        let Some(mut concern) = self.get_concern(id)? else {
+            return Ok(());
+        };
+        concern.last_touched = Utc::now();
+        concern.context.last_update_reason = reason.to_string();
+        self.save_concern(&concern)
+    }
+
+    // ========================================================================
+    // Living Loop Foundation - Orientation Snapshots
+    // ========================================================================
+
+    pub fn save_orientation_snapshot(&self, orientation: &OrientationSnapshotRecord) -> Result<()> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO orientation_snapshots
+             (id, timestamp, user_state, disposition, synthesis, salience_map, anomalies,
+              pending_thoughts, mood_valence, mood_arousal, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                orientation.id,
+                orientation.timestamp.to_rfc3339(),
+                serde_json::to_string(&orientation.user_state)
+                    .context("Failed to serialize orientation user_state")?,
+                orientation.disposition,
+                orientation.synthesis,
+                serde_json::to_string(&orientation.salience_map)
+                    .context("Failed to serialize orientation salience_map")?,
+                serde_json::to_string(&orientation.anomalies)
+                    .context("Failed to serialize orientation anomalies")?,
+                serde_json::to_string(&orientation.pending_thoughts)
+                    .context("Failed to serialize orientation pending_thoughts")?,
+                orientation.mood_valence,
+                orientation.mood_arousal,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_recent_orientations(&self, limit: usize) -> Result<Vec<OrientationSnapshotRecord>> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, user_state, disposition, synthesis, salience_map, anomalies,
+                    pending_thoughts, mood_valence, mood_arousal
+             FROM orientation_snapshots
+             ORDER BY timestamp DESC
+             LIMIT ?1",
+        )?;
+        let snapshots = stmt
+            .query_map([limit.max(1)], |row| {
+                let timestamp_raw: String = row.get(1)?;
+                let user_state_raw: String = row.get(2)?;
+                let salience_map_raw: Option<String> = row.get(5)?;
+                let anomalies_raw: Option<String> = row.get(6)?;
+                let pending_thoughts_raw: Option<String> = row.get(7)?;
+                Ok(OrientationSnapshotRecord {
+                    id: row.get(0)?,
+                    timestamp: timestamp_raw.parse().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                    user_state: serde_json::from_str(&user_state_raw).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                    disposition: row.get(3)?,
+                    synthesis: row.get(4)?,
+                    salience_map: match salience_map_raw {
+                        Some(raw) => serde_json::from_str(&raw).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                5,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
+                        None => serde_json::json!([]),
+                    },
+                    anomalies: match anomalies_raw {
+                        Some(raw) => serde_json::from_str(&raw).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                6,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
+                        None => serde_json::json!([]),
+                    },
+                    pending_thoughts: match pending_thoughts_raw {
+                        Some(raw) => serde_json::from_str(&raw).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                7,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
+                        None => serde_json::json!([]),
+                    },
+                    mood_valence: row.get(8)?,
+                    mood_arousal: row.get(9)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(snapshots)
+    }
+
+    // ========================================================================
+    // Living Loop Foundation - Pending Thought Queue
+    // ========================================================================
+
+    pub fn queue_pending_thought(&self, thought: &PendingThoughtRecord) -> Result<()> {
+        let conn = self.lock_conn()?;
+        let relates_to_json = serde_json::to_string(&thought.relates_to)
+            .context("Failed to serialize pending_thought relates_to")?;
+        conn.execute(
+            "INSERT OR REPLACE INTO pending_thoughts_queue
+             (id, content, context, priority, relates_to, created_at, surfaced_at, dismissed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                thought.id,
+                thought.content,
+                thought.context,
+                thought.priority,
+                relates_to_json,
+                thought.created_at.to_rfc3339(),
+                thought.surfaced_at.map(|v| v.to_rfc3339()),
+                thought.dismissed_at.map(|v| v.to_rfc3339()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_unsurfaced_thoughts(&self) -> Result<Vec<PendingThoughtRecord>> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, content, context, priority, relates_to, created_at, surfaced_at, dismissed_at
+             FROM pending_thoughts_queue
+             WHERE surfaced_at IS NULL AND dismissed_at IS NULL
+             ORDER BY priority DESC, created_at ASC",
+        )?;
+        let thoughts = stmt
+            .query_map([], |row| {
+                let relates_to_raw: Option<String> = row.get(4)?;
+                let created_at_raw: String = row.get(5)?;
+                let surfaced_at_raw: Option<String> = row.get(6)?;
+                let dismissed_at_raw: Option<String> = row.get(7)?;
+                Ok(PendingThoughtRecord {
+                    id: row.get(0)?,
+                    content: row.get(1)?,
+                    context: row.get(2)?,
+                    priority: row.get(3)?,
+                    relates_to: relates_to_raw
+                        .as_deref()
+                        .map(serde_json::from_str::<Vec<String>>)
+                        .transpose()
+                        .map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                4,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?
+                        .unwrap_or_default(),
+                    created_at: created_at_raw.parse().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            5,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                    surfaced_at: match surfaced_at_raw {
+                        Some(raw) => Some(raw.parse().map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                6,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?),
+                        None => None,
+                    },
+                    dismissed_at: match dismissed_at_raw {
+                        Some(raw) => Some(raw.parse().map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                7,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?),
+                        None => None,
+                    },
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(thoughts)
+    }
+
+    pub fn mark_thought_surfaced(&self, id: &str) -> Result<()> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "UPDATE pending_thoughts_queue
+             SET surfaced_at = ?2
+             WHERE id = ?1",
+            params![id, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn dismiss_thought(&self, id: &str) -> Result<()> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "UPDATE pending_thoughts_queue
+             SET dismissed_at = ?2
+             WHERE id = ?1",
+            params![id, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
     }
 
     // ========================================================================
@@ -2439,6 +3139,175 @@ mod tests {
             .expect("summary exists");
         assert_eq!(summary.summarized_message_count, 5);
         assert!(summary.summary_text.contains("Older context summary"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn journal_entry_roundtrip_search_and_context() {
+        let path = temp_db_path("journal_roundtrip");
+        let db = AgentDatabase::new(&path).expect("db init");
+
+        let entry = JournalEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: Utc::now(),
+            entry_type: JournalEntryType::Reflection,
+            content: "I noticed Max is iterating faster on calibration today.".to_string(),
+            context: JournalContext {
+                trigger: "ambient_orientation".to_string(),
+                user_state_at_time: "deep_work".to_string(),
+                time_of_day: "afternoon".to_string(),
+            },
+            related_concerns: vec!["thermal-array".to_string()],
+            mood_at_time: Some(JournalMood {
+                valence: 0.3,
+                arousal: 0.6,
+            }),
+        };
+
+        db.add_journal_entry(&entry).expect("save journal entry");
+
+        let recent = db.get_recent_journal(5).expect("get recent journal");
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].id, entry.id);
+        assert_eq!(recent[0].entry_type, JournalEntryType::Reflection);
+        assert_eq!(
+            recent[0].related_concerns,
+            vec!["thermal-array".to_string()]
+        );
+
+        let found = db.search_journal("calibration", 5).expect("search journal");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, entry.id);
+
+        let context = db
+            .get_journal_for_context(64)
+            .expect("journal context string");
+        assert!(context.contains("Recent Journal Notes"));
+        assert!(context.contains("calibration"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn concerns_roundtrip_touch_and_salience_update() {
+        let path = temp_db_path("concerns_roundtrip");
+        let db = AgentDatabase::new(&path).expect("db init");
+
+        let now = Utc::now();
+        let concern = Concern {
+            id: uuid::Uuid::new_v4().to_string(),
+            created_at: now,
+            last_touched: now,
+            summary: "Thermal array calibration workflow".to_string(),
+            concern_type: ConcernType::CollaborativeProject {
+                project_name: "thermal-array".to_string(),
+                my_role: "observer".to_string(),
+            },
+            salience: Salience::Active,
+            my_thoughts: "Track iteration speed and toolchain friction.".to_string(),
+            related_memory_keys: vec!["activity-log".to_string()],
+            context: ConcernContext {
+                how_it_started: "operator conversation".to_string(),
+                key_events: vec!["initial planning".to_string()],
+                last_update_reason: "created".to_string(),
+            },
+        };
+
+        db.save_concern(&concern).expect("save concern");
+
+        let loaded = db
+            .get_concern(&concern.id)
+            .expect("get concern")
+            .expect("concern exists");
+        assert_eq!(loaded.summary, concern.summary);
+        assert_eq!(loaded.salience, Salience::Active);
+
+        let active = db.get_active_concerns().expect("active concerns");
+        assert!(active.iter().any(|c| c.id == concern.id));
+
+        db.touch_concern(&concern.id, "checked during ll.1 test")
+            .expect("touch concern");
+        let touched = db
+            .get_concern(&concern.id)
+            .expect("get touched concern")
+            .expect("touched concern exists");
+        assert_eq!(
+            touched.context.last_update_reason,
+            "checked during ll.1 test"
+        );
+
+        db.update_concern_salience(&concern.id, Salience::Dormant)
+            .expect("demote concern");
+        let active_after = db.get_active_concerns().expect("active after demote");
+        assert!(!active_after.iter().any(|c| c.id == concern.id));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn orientation_snapshot_and_pending_thought_queue_roundtrip() {
+        let path = temp_db_path("orientation_pending");
+        let db = AgentDatabase::new(&path).expect("db init");
+
+        let snapshot = OrientationSnapshotRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: Utc::now(),
+            user_state: serde_json::json!({"type":"deep_work","activity":"coding"}),
+            disposition: "observe".to_string(),
+            synthesis: "Max is focused and stable.".to_string(),
+            salience_map: serde_json::json!([{"summary":"Code task","relevance":0.8}]),
+            anomalies: serde_json::json!([]),
+            pending_thoughts: serde_json::json!([{"content":"Mention GPU temp drift"}]),
+            mood_valence: Some(0.2),
+            mood_arousal: Some(0.5),
+        };
+        db.save_orientation_snapshot(&snapshot)
+            .expect("save orientation snapshot");
+
+        let recent = db.get_recent_orientations(3).expect("recent orientations");
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].id, snapshot.id);
+        assert_eq!(recent[0].disposition, "observe");
+
+        let thought_a = PendingThoughtRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            content: "Ask whether to run a thermal check.".to_string(),
+            context: Some("orientation.surface".to_string()),
+            priority: 0.9,
+            relates_to: vec!["thermal-array".to_string()],
+            created_at: Utc::now(),
+            surfaced_at: None,
+            dismissed_at: None,
+        };
+        let thought_b = PendingThoughtRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            content: "Share calibration trend if asked.".to_string(),
+            context: Some("orientation.surface".to_string()),
+            priority: 0.4,
+            relates_to: vec![],
+            created_at: Utc::now(),
+            surfaced_at: None,
+            dismissed_at: None,
+        };
+        db.queue_pending_thought(&thought_a)
+            .expect("queue thought a");
+        db.queue_pending_thought(&thought_b)
+            .expect("queue thought b");
+
+        let unsurfaced = db
+            .get_unsurfaced_thoughts()
+            .expect("get unsurfaced thoughts");
+        assert_eq!(unsurfaced.len(), 2);
+        assert_eq!(unsurfaced[0].id, thought_a.id);
+
+        db.mark_thought_surfaced(&thought_a.id)
+            .expect("mark surfaced");
+        db.dismiss_thought(&thought_b.id).expect("dismiss thought");
+        let remaining = db
+            .get_unsurfaced_thoughts()
+            .expect("remaining unsurfaced thoughts");
+        assert!(remaining.is_empty());
 
         let _ = std::fs::remove_file(&path);
     }
