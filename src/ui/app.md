@@ -6,7 +6,7 @@ Defines `AgentApp`, the top-level eframe application. It owns the agent handle, 
 ## Components
 
 ### `AgentApp`
-- **Does**: Central application state holding agent reference, event log, UI panels, avatar set, database handle, conversation list/selection, scoped chat history, chat media texture cache, live tool-progress buffer, and live streaming preview state, plus activity panel visibility
+- **Does**: Central application state holding agent reference, event log, UI panels, avatar set, database handle, conversation list/selection, scoped chat history, chat media texture cache, structured live tool-progress buffer (with optional subtask tags), and live streaming preview state, plus activity panel visibility
 - **Interacts with**: `Agent` (via `Arc<Agent>`), `AgentEvent`/`AgentVisualState` from `crate::agent`, `AgentDatabase`/`ChatMessage`/`ChatConversation` from `crate::database`, all UI panel structs
 - **Rationale**: Single owner of all GUI state; bridges sync egui rendering with async agent operations
 
@@ -39,7 +39,7 @@ Defines `AgentApp`, the top-level eframe application. It owns the agent handle, 
 - **Interacts with**: `ChatConversation.runtime_state` from `database.rs`
 
 ### `impl eframe::App for AgentApp` -- `update()`
-- **Does**: Main render loop. Loads avatars on first frame, polls `event_rx` for `AgentEvent`s, maps `ChatStreaming` events into a live preview bubble, records `ToolCallProgress` updates into a per-conversation live buffer, refreshes chat on operator-related actions, renders header with sprite, toolbar buttons, primary private chat (including media rendering via shared cache), a live "Agent Turn" tool-output drawer, secondary activity side panel, multiline chat input, and all modal panels (settings, character, comfy workflow). Persists config and hot-reloads the agent on save.
+- **Does**: Main render loop. Loads avatars on first frame, polls `event_rx` for `AgentEvent`s, maps `ChatStreaming` events into a live preview bubble, records `ToolCallProgress` updates into a per-conversation live buffer, refreshes chat on operator-related actions, renders header with sprite, toolbar buttons, primary private chat (including media rendering via shared cache), a live "Agent Turn" drawer with expandable per-subtask sections, secondary activity side panel, multiline chat input, and all modal panels (settings, character, comfy workflow). Persists config and hot-reloads the agent on save.
 - **Interacts with**: `sprite::render_agent_sprite`, `chat::render_event_log`, `chat::render_private_chat`, `SettingsPanel::render`, `CharacterPanel::render`, `ComfySettingsPanel::render`, `Agent::reload_config`, `Agent::toggle_pause`
 
 ## Contracts
@@ -59,4 +59,4 @@ Defines `AgentApp`, the top-level eframe application. It owns the agent handle, 
 - Avatar loading is deferred to the first `update()` call because `egui::Context` is not available at construction time.
 - Chat input is multiline; plain `Enter` sends while `Shift+Enter` inserts a newline.
 - Live provider tokens are shown inline in chat via `streaming_chat_preview` and replaced by persisted messages once the agent saves final output.
-- Tool execution progress is rendered in a dedicated drawer under chat, giving real-time visibility into what the agent is doing before handoff.
+- Tool execution progress is rendered in a dedicated drawer under chat, with expandable subtask groups when progress lines carry a `[subtask-id]` prefix (used by background chat subtasks).

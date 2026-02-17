@@ -42,5 +42,6 @@ Provides two scrollable display panels: an event log showing agent activity and 
 - Journal events render as compact summaries (`entry_type: preview`) to confirm ambient journaling without exposing full structured payloads.
 - Concern events render as concise create/touch lines with short IDs so concern lifecycle changes are visible without opening database internals.
 - Tool and thinking detail blocks are intentionally hidden by default behind `egui::CollapsingHeader` sections to keep chat readable.
+- Thinking and tool-call expanders are rendered in a dedicated full-width row beneath each message bubble, stacked vertically so expanded content stays readable.
 - Image media entries attempt inline previews from local paths; non-image media shows typed file cards with path + MIME details.
 - Turn-control metadata is rendered as a lightweight separator row in the stream (not as a bubble), and malformed open-ended `[turn_control]` blocks are tolerated so chat text remains clean.

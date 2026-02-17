@@ -274,6 +274,17 @@ pub fn render_private_chat(
                     },
                 );
 
+                if !payload.thinking_details.is_empty() || !payload.tool_details.is_empty() {
+                    ui.add_space(4.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(row_width, 0.0),
+                        egui::Layout::left_to_right(egui::Align::TOP),
+                        |ui| {
+                            render_message_detail_panels(ui, &msg.id, &payload);
+                        },
+                    );
+                }
+
                 if let Some(turn_control) = payload.turn_control.as_ref() {
                     render_turn_control_separator(ui, turn_control);
                     ui.add_space(6.0);
@@ -362,34 +373,6 @@ fn render_chat_message_bubble(
             );
         }
 
-        let has_thinking = !payload.thinking_details.is_empty();
-        let has_tool_calls = !payload.tool_details.is_empty();
-
-        if has_thinking || has_tool_calls {
-            ui.add_space(4.0);
-            if has_thinking && has_tool_calls {
-                ui.columns(2, |cols| {
-                    let col_wrap_len = max_token_len_for_width(cols[0].available_width());
-                    render_thinking_panel(
-                        &mut cols[0],
-                        &msg.id,
-                        &payload.thinking_details,
-                        col_wrap_len,
-                    );
-                    render_tool_calls_panel(
-                        &mut cols[1],
-                        &msg.id,
-                        &payload.tool_details,
-                        col_wrap_len,
-                    );
-                });
-            } else if has_thinking {
-                render_thinking_panel(ui, &msg.id, &payload.thinking_details, wrap_token_len);
-            } else {
-                render_tool_calls_panel(ui, &msg.id, &payload.tool_details, wrap_token_len);
-            }
-        }
-
         // Show processing status for operator messages
         if is_operator && !msg.processed {
             ui.label(
@@ -400,6 +383,28 @@ fn render_chat_message_bubble(
             );
         }
     });
+}
+
+fn render_message_detail_panels(ui: &mut egui::Ui, message_id: &str, payload: &ChatRenderPayload) {
+    let details_width = (ui.available_width() - 8.0).max(120.0);
+    ui.set_min_width(details_width);
+    ui.set_width(details_width);
+    ui.set_max_width(details_width);
+    let wrap_token_len = max_token_len_for_width(details_width);
+
+    let has_thinking = !payload.thinking_details.is_empty();
+    let has_tool_calls = !payload.tool_details.is_empty();
+
+    if has_thinking {
+        render_thinking_panel(ui, message_id, &payload.thinking_details, wrap_token_len);
+        if has_tool_calls {
+            ui.add_space(4.0);
+        }
+    }
+
+    if has_tool_calls {
+        render_tool_calls_panel(ui, message_id, &payload.tool_details, wrap_token_len);
+    }
 }
 
 fn render_media_panel(

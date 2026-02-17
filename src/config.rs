@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RespondTo {
@@ -152,6 +154,14 @@ pub struct AgentConfig {
     pub max_tool_iterations: u32,
     #[serde(default)]
     pub disable_tool_iteration_limit: bool,
+    #[serde(default = "default_max_chat_autonomous_turns")]
+    pub max_chat_autonomous_turns: u32,
+    #[serde(default = "default_max_background_subtask_turns")]
+    pub max_background_subtask_turns: u32,
+    #[serde(default)]
+    pub disable_chat_turn_limit: bool,
+    #[serde(default)]
+    pub disable_background_subtask_turn_limit: bool,
     #[serde(default)]
     pub enable_ambient_loop: bool,
     #[serde(default = "default_ambient_min_interval_secs")]
@@ -281,6 +291,14 @@ fn default_max_tool_iterations() -> u32 {
     10
 }
 
+fn default_max_chat_autonomous_turns() -> u32 {
+    4
+}
+
+fn default_max_background_subtask_turns() -> u32 {
+    8
+}
+
 fn default_ambient_min_interval_secs() -> u64 {
     30
 }
@@ -329,6 +347,10 @@ impl Default for AgentConfig {
             poll_interval_secs: default_poll_interval(),
             max_tool_iterations: default_max_tool_iterations(),
             disable_tool_iteration_limit: false,
+            max_chat_autonomous_turns: default_max_chat_autonomous_turns(),
+            max_background_subtask_turns: default_max_background_subtask_turns(),
+            disable_chat_turn_limit: true,
+            disable_background_subtask_turn_limit: true,
             enable_ambient_loop: false,
             ambient_min_interval_secs: default_ambient_min_interval_secs(),
             enable_journal: true,
@@ -375,62 +397,48 @@ impl Default for AgentConfig {
 }
 
 impl AgentConfig {
-    /// Get the directory containing the executable
+    /// Get the directory containing the running executable.
     fn get_base_dir() -> PathBuf {
-        match std::env::current_exe() {
-            Ok(exe_path) => exe_path
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from(".")),
-            Err(_) => PathBuf::from("."),
-        }
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
     }
 
-    /// Get the path to the config file (relative to executable)
+    /// Get the path to the primary config file (relative to executable directory).
     pub fn config_path() -> PathBuf {
         Self::get_base_dir().join("ponderer_config.toml")
     }
 
-    /// Load config from ponderer_config.toml (next to executable), falling back to agent_config.toml
+    /// Load config from known config locations.
     pub fn load() -> Self {
-        let path = Self::config_path();
-
-        // Try ponderer_config.toml first
-        if let Ok(contents) = fs::read_to_string(&path) {
-            match toml::from_str::<AgentConfig>(&contents) {
-                Ok(config) => {
-                    tracing::info!("Loaded config from {:?}", path);
-                    return config;
-                }
-                Err(e) => {
-                    tracing::error!("Failed to parse {:?}: {}", path, e);
-                }
-            }
-        }
-
-        // Fall back to agent_config.toml (backward compatibility)
-        let legacy_path = Self::get_base_dir().join("agent_config.toml");
-        if let Ok(contents) = fs::read_to_string(&legacy_path) {
-            match toml::from_str::<AgentConfig>(&contents) {
-                Ok(config) => {
-                    tracing::info!("Loaded config from legacy {:?}", legacy_path);
-                    return config;
-                }
-                Err(e) => {
-                    tracing::error!("Failed to parse {:?}: {}", legacy_path, e);
+        for path in Self::candidate_config_paths() {
+            if let Ok(contents) = fs::read_to_string(&path) {
+                match toml::from_str::<AgentConfig>(&contents) {
+                    Ok(mut config) => {
+                        config.normalize_portable_paths();
+                        tracing::info!("Loaded config from {:?}", path);
+                        return config;
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to parse {:?}: {}", path, e);
+                    }
                 }
             }
         }
 
         tracing::warn!("No config file found, using defaults + env vars");
-        Self::from_env()
+        let mut config = Self::from_env();
+        config.normalize_portable_paths();
+        config
     }
 
-    /// Save config to file (next to executable)
+    /// Save config to file (in executable directory)
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path();
-
-        let toml_string = toml::to_string_pretty(self).context("Failed to serialize config")?;
+        let persisted = self.portable_persisted_copy();
+        let toml_string =
+            toml::to_string_pretty(&persisted).context("Failed to serialize config")?;
 
         fs::write(&path, toml_string)
             .with_context(|| format!("Failed to write config to {:?}", path))?;
@@ -476,6 +484,32 @@ impl AgentConfig {
                 || disabled.eq_ignore_ascii_case("true")
                 || disabled.eq_ignore_ascii_case("yes");
             config.disable_tool_iteration_limit = disabled;
+        }
+
+        if let Ok(limit) = env::var("AGENT_MAX_CHAT_AUTONOMOUS_TURNS") {
+            if let Ok(turns) = limit.parse() {
+                config.max_chat_autonomous_turns = turns;
+            }
+        }
+
+        if let Ok(limit) = env::var("AGENT_MAX_BACKGROUND_SUBTASK_TURNS") {
+            if let Ok(turns) = limit.parse() {
+                config.max_background_subtask_turns = turns;
+            }
+        }
+
+        if let Ok(disabled) = env::var("AGENT_DISABLE_CHAT_TURN_LIMIT") {
+            let disabled = disabled.eq_ignore_ascii_case("1")
+                || disabled.eq_ignore_ascii_case("true")
+                || disabled.eq_ignore_ascii_case("yes");
+            config.disable_chat_turn_limit = disabled;
+        }
+
+        if let Ok(disabled) = env::var("AGENT_DISABLE_BACKGROUND_SUBTASK_TURN_LIMIT") {
+            let disabled = disabled.eq_ignore_ascii_case("1")
+                || disabled.eq_ignore_ascii_case("true")
+                || disabled.eq_ignore_ascii_case("yes");
+            config.disable_background_subtask_turn_limit = disabled;
         }
 
         if let Ok(enabled) = env::var("AGENT_ENABLE_AMBIENT_LOOP") {
@@ -582,4 +616,97 @@ impl AgentConfig {
 
         config
     }
+
+    fn normalize_portable_paths(&mut self) {
+        let portable_name = normalize_portable_path(&self.database_path, default_database_path());
+        self.database_path = Self::get_base_dir()
+            .join(portable_name)
+            .to_string_lossy()
+            .to_string();
+    }
+
+    fn candidate_config_paths() -> Vec<PathBuf> {
+        let roots = Self::config_search_roots();
+        let mut declared: Vec<PathBuf> = Vec::new();
+        for root in roots {
+            declared.push(root.join("ponderer_config.toml"));
+            declared.push(root.join("agent_config.toml"));
+        }
+
+        let mut existing: Vec<(PathBuf, Option<SystemTime>, usize)> = declared
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, path)| {
+                fs::metadata(path)
+                    .ok()
+                    .map(|meta| (path.clone(), meta.modified().ok(), idx))
+            })
+            .collect();
+
+        if existing.is_empty() {
+            return declared;
+        }
+
+        existing.sort_by(|a, b| match (a.1, b.1) {
+            (Some(a_time), Some(b_time)) => b_time.cmp(&a_time).then_with(|| a.2.cmp(&b.2)),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.2.cmp(&b.2),
+        });
+
+        existing.into_iter().map(|(path, _, _)| path).collect()
+    }
+
+    fn config_search_roots() -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        let exe_dir = Self::get_base_dir();
+        roots.push(exe_dir.clone());
+        if let Some(parent) = exe_dir.parent().map(|p| p.to_path_buf()) {
+            if !roots.iter().any(|existing| existing == &parent) {
+                roots.push(parent);
+            }
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            if !roots.iter().any(|existing| existing == &cwd) {
+                roots.push(cwd);
+            }
+        }
+        roots
+    }
+
+    fn portable_persisted_copy(&self) -> Self {
+        let mut clone = self.clone();
+        let base_dir = Self::get_base_dir();
+        let path = PathBuf::from(&clone.database_path);
+        if path.is_absolute() {
+            if let Ok(stripped) = path.strip_prefix(&base_dir) {
+                clone.database_path = stripped.to_string_lossy().to_string();
+            } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                clone.database_path = name.to_string();
+            }
+        }
+        clone
+    }
+}
+
+fn normalize_portable_path(raw_path: &str, default_name: String) -> String {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return default_name;
+    }
+
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            tracing::warn!(
+                "Config path '{}' is absolute; using portable local filename '{}'",
+                raw_path,
+                name
+            );
+            return name.to_string();
+        }
+        return default_name;
+    }
+
+    trimmed.to_string()
 }

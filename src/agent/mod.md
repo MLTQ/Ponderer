@@ -61,7 +61,7 @@ Coordinates the core autonomous agent loop with explicit three-loop architecture
 - **Rationale**: Keeps long-lived concern memory fresh without spamming low-value updates
 
 ### `process_chat_messages`
-- **Does**: Handles unread operator chat messages by conversation thread, streams live token output during each LLM call, emits per-tool progress updates, ingests structured concern signals (`[concerns]...[/concerns]`), and can run multiple autonomous turns per thread before final handoff using a structured `[turn_control]...[/turn_control]` protocol. If turn budget is exhausted while work can still continue, it offloads to a detached background subtask.
+- **Does**: Handles unread operator chat messages by conversation thread, streams live token output during each LLM call, emits per-tool progress updates, ingests structured concern signals (`[concerns]...[/concerns]`), and can run multiple autonomous turns per thread before final handoff using a structured `[turn_control]...[/turn_control]` protocol. Foreground turn caps are optional safety rails; if enabled and exhausted while work can still continue, it offloads to a detached background subtask.
 - **Interacts with**: `database::chat_messages`, `database::chat_conversations`, `database::chat_turns`, `database::chat_turn_tool_calls`, `tools::agentic::AgenticLoop::run_with_history_streaming_and_tool_events`, `ToolRegistry`
 - **Rationale**: Uses continuation hints (not synthetic operator messages) for multi-turn autonomy, scopes private-chat tools away from Graphchan posting, compacts long sessions through persisted summary snapshots, and only persists yielded assistant replies while allowing long tasks to continue asynchronously.
 
@@ -91,7 +91,7 @@ Coordinates the core autonomous agent loop with explicit three-loop architecture
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
 | `main.rs` | `Agent::new(...).run_loop()` drives autonomous behavior without extra orchestration | Changing constructor or loop entrypoint signatures |
-| `config.rs` | Three-loop fields (`enable_ambient_loop`, `ambient_min_interval_secs`, `enable_journal`, `journal_min_interval_secs`, `enable_concerns`, `enable_dream_cycle`, `dream_min_interval_secs`) plus agentic-loop controls (`max_tool_iterations`, `disable_tool_iteration_limit`) control runtime loop behavior | Renaming/removing these loop-control fields |
+| `config.rs` | Three-loop fields (`enable_ambient_loop`, `ambient_min_interval_secs`, `enable_journal`, `journal_min_interval_secs`, `enable_concerns`, `enable_dream_cycle`, `dream_min_interval_secs`) plus loop controls (`max_tool_iterations`, `disable_tool_iteration_limit`, `max_chat_autonomous_turns`, `max_background_subtask_turns`, `disable_chat_turn_limit`, `disable_background_subtask_turn_limit`) control runtime behavior | Renaming/removing these loop-control fields |
 | `ui/app.rs` | `AgentEvent` variants remain stable enough for chat/state rendering, including `ChatStreaming { conversation_id, content, done }`, `ToolCallProgress { ... }`, `OrientationUpdate(...)`, `JournalWritten(...)`, `ConcernCreated { ... }`, and `ConcernTouched { ... }` | Renaming/removing emitted event types |
 | `database.rs` | Chat and memory APIs are available and synchronous; private chat relies on conversation-scoped context plus turn lifecycle APIs (`begin_chat_turn`, `record_chat_turn_tool_call`, `complete_chat_turn`, `fail_chat_turn`, `add_chat_message_in_turn`) | Changing DB API names, turn-state semantics, or message persistence order |
 | `tools/mod.rs` | `ToolRegistry` can be shared and used in autonomous context, including bridged skill tools | Removing registry injection or bridged tool names used by prompts |
@@ -106,10 +106,11 @@ Coordinates the core autonomous agent loop with explicit three-loop architecture
 - Skill-event handling now goes through the same multi-step tool-calling loop used by private chat, so skill actions and regular tools share one decision engine.
 - Private chat replies are now scoped per conversation ID to avoid cross-thread prompt contamination.
 - Long-running private chats are compacted as `summary snapshot + recent context + new messages`, with snapshots stored in DB and refreshed after configurable message deltas.
-- Private chat emits a structured turn-control block per assistant response; the loop continues only when decision=`continue`, user input is not needed, and turn budget remains.
+- Private chat emits a structured turn-control block per assistant response; continuation is model-driven (`decision=continue` + no user input needed), with optional turn caps acting only as safety rails.
 - Private chat continuation now also requires meaningful forward progress signals (`tool_count > 0` or `status=still_working`) before another autonomous turn is allowed.
 - When private-chat continuation is still justified at the turn cap, work is handed off to a per-conversation background subtask runner instead of forcing an immediate stop.
 - Agentic tool-loop iteration limits are now settings-driven (`max_tool_iterations` with optional unbounded mode) instead of hardcoded per loop invocation.
+- Private-chat autonomous turn limits are settings-driven for both foreground (`max_chat_autonomous_turns`) and detached background subtasks (`max_background_subtask_turns`), and each limit can be disabled so continuation is driven solely by model turn-control decisions.
 - Turn-control parsing treats visible assistant text as authoritative; block `user_message` is only fallback when visible text is empty and does not resemble a hallucinated `User:`/`Operator:` transcript.
 - Turn-control parsing tolerates malformed metadata envelopes (`[turn_control]` without closing marker) and fenced JSON payloads so continuation decisions remain stable across provider quirks.
 - Private-chat prompts now include concern-priority context ahead of general working memory to bias retrieval toward ongoing topics.
@@ -120,7 +121,7 @@ Coordinates the core autonomous agent loop with explicit three-loop architecture
 - Background subtasks reuse the same streaming callbacks, so detached turns still surface incremental tool output and token streaming in activity/chat panes.
 - Each autonomous private-chat turn is persisted in DB before/after execution, including tool-call lineage and terminal state (`completed`, `awaiting_approval`, or `failed`), but only the final yielded assistant message is added to chat history.
 - Orientation is now refreshed once per cycle as a log-only signal: it emits `OrientationUpdate`, persists `orientation_snapshots`, and uses an input signature cache to avoid repeated LLM calls when context is unchanged.
-- When `enable_screen_capture_in_loop` is true, orientation now includes a screenshot-based desktop observation summary generated via vision evaluation before prompt synthesis.
+- When `enable_screen_capture_in_loop` is true, orientation now includes a screenshot-based desktop observation summary generated via vision evaluation before prompt synthesis. Orientation captures are written to `.ponderer/orientation_latest.png` under the launch/working directory.
 - Repeated orientation screenshot-capture failures are warn-once + debug thereafter to avoid log spam; macOS permission failures include a Screen Recording hint.
 - Journal generation now runs off orientation disposition (`journal`) with two anti-spam guards: skip when disposition is unchanged from previous cycle, and skip until a minimum interval elapses since the last entry.
 - Tool access is now enforced by explicit capability profiles per loop (`private_chat`, `skill_events`, `heartbeat`), with optional config overrides for allow/deny lists.

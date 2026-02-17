@@ -40,9 +40,12 @@ struct StreamingChatPreview {
     content: String,
 }
 
+#[derive(Clone)]
 struct LiveToolProgress {
     conversation_id: String,
-    line: String,
+    tool_name: String,
+    output_preview: String,
+    subtask_id: Option<String>,
 }
 
 impl AgentApp {
@@ -157,10 +160,12 @@ impl AgentApp {
         }
     }
 
-    fn push_live_tool_progress(&mut self, conversation_id: &str, line: String) {
+    fn push_live_tool_progress(&mut self, conversation_id: &str, tool_name: &str, output: &str) {
         self.live_tool_progress.push(LiveToolProgress {
             conversation_id: conversation_id.to_string(),
-            line,
+            tool_name: tool_name.to_string(),
+            output_preview: output.to_string(),
+            subtask_id: parse_subtask_id(output),
         });
         if self.live_tool_progress.len() > MAX_LIVE_TOOL_PROGRESS_LINES {
             let overflow = self.live_tool_progress.len() - MAX_LIVE_TOOL_PROGRESS_LINES;
@@ -260,10 +265,7 @@ impl eframe::App for AgentApp {
                     tool_name,
                     output_preview,
                 } => {
-                    self.push_live_tool_progress(
-                        conversation_id,
-                        format!("{} -> {}", tool_name, output_preview),
-                    );
+                    self.push_live_tool_progress(conversation_id, tool_name, output_preview);
                 }
                 AgentEvent::ActionTaken { action, .. } if action.contains("operator") => {
                     self.refresh_conversations();
@@ -380,11 +382,11 @@ impl eframe::App for AgentApp {
                 &mut self.chat_media_cache,
             );
 
-            let active_progress: Vec<String> = self
+            let active_progress: Vec<LiveToolProgress> = self
                 .live_tool_progress
                 .iter()
                 .filter(|entry| entry.conversation_id == self.active_conversation_id)
-                .map(|entry| entry.line.clone())
+                .cloned()
                 .collect();
             if !active_progress.is_empty() {
                 ui.add_space(6.0);
@@ -399,14 +401,65 @@ impl eframe::App for AgentApp {
                             .weak(),
                         );
                         ui.add_space(4.0);
-                        egui::ScrollArea::vertical()
-                            .max_height(120.0)
-                            .stick_to_bottom(true)
-                            .show(ui, |ui| {
-                                for line in &active_progress {
-                                    ui.monospace(line);
+                        let mut global_lines: Vec<String> = Vec::new();
+                        let mut subtask_groups: Vec<(String, Vec<String>)> = Vec::new();
+
+                        for entry in &active_progress {
+                            let line = format!("{} -> {}", entry.tool_name, entry.output_preview);
+                            if let Some(subtask_id) = entry.subtask_id.as_deref() {
+                                if let Some((_, lines)) =
+                                    subtask_groups.iter_mut().find(|(id, _)| id == subtask_id)
+                                {
+                                    lines.push(line);
+                                } else {
+                                    subtask_groups.push((subtask_id.to_string(), vec![line]));
                                 }
-                            });
+                            } else {
+                                global_lines.push(line);
+                            }
+                        }
+
+                        if !global_lines.is_empty() {
+                            ui.label(egui::RichText::new("General").small().weak());
+                            egui::ScrollArea::vertical()
+                                .max_height(80.0)
+                                .stick_to_bottom(true)
+                                .show(ui, |ui| {
+                                    for line in &global_lines {
+                                        ui.monospace(line);
+                                    }
+                                });
+                            ui.add_space(6.0);
+                        }
+
+                        for (subtask_id, lines) in &subtask_groups {
+                            egui::CollapsingHeader::new(format!("Subtask {}", subtask_id))
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(120.0)
+                                        .stick_to_bottom(true)
+                                        .show(ui, |ui| {
+                                            for line in lines {
+                                                ui.monospace(line);
+                                            }
+                                        });
+                                });
+                        }
+
+                        if subtask_groups.is_empty() {
+                            egui::ScrollArea::vertical()
+                                .max_height(120.0)
+                                .stick_to_bottom(true)
+                                .show(ui, |ui| {
+                                    for line in &active_progress {
+                                        ui.monospace(format!(
+                                            "{} -> {}",
+                                            line.tool_name, line.output_preview
+                                        ));
+                                    }
+                                });
+                        }
                     });
             }
 
@@ -502,5 +555,33 @@ impl eframe::App for AgentApp {
 
         // Request repaint for smooth updates
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+}
+
+fn parse_subtask_id(output: &str) -> Option<String> {
+    let trimmed = output.trim_start();
+    let body = trimmed.strip_prefix('[')?;
+    let end = body.find(']')?;
+    let id = body[..end].trim();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_subtask_id;
+
+    #[test]
+    fn extracts_subtask_id_from_bracket_prefix() {
+        let parsed = parse_subtask_id("[abc123] turn 2/8 running");
+        assert_eq!(parsed.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn ignores_non_prefixed_lines() {
+        assert!(parse_subtask_id("shell -> output").is_none());
     }
 }

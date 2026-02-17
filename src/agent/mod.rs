@@ -13,7 +13,7 @@ use flume::Sender;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -58,8 +58,6 @@ const CHAT_TURN_CONTROL_BLOCK_END: &str = "[/turn_control]";
 const CHAT_CONCERNS_BLOCK_START: &str = "[concerns]";
 const CHAT_CONCERNS_BLOCK_END: &str = "[/concerns]";
 const CHAT_CONTINUE_MARKER_LEGACY: &str = "[CONTINUE]";
-const CHAT_MAX_AUTONOMOUS_TURNS: usize = 4;
-const CHAT_BACKGROUND_MAX_TURNS: usize = 8;
 const CHAT_BACKGROUND_ITERATION_OFFSET: i64 = 100;
 const CHAT_CONTEXT_RECENT_LIMIT: usize = 18;
 const CHAT_COMPACTION_TRIGGER_MESSAGES: usize = 36;
@@ -1108,7 +1106,21 @@ impl Agent {
             return None;
         }
 
-        let screenshot_path = std::env::temp_dir().join("ponderer_orientation_latest.png");
+        let state_root = PathBuf::from(&config.database_path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let screenshot_path = state_root.join(".ponderer").join("orientation_latest.png");
+        if let Some(parent) = screenshot_path.parent() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                tracing::warn!(
+                    "Failed to create orientation screenshot directory '{}': {}",
+                    parent.display(),
+                    error
+                );
+                return None;
+            }
+        }
         if let Err(error) = capture_screen_to_path(&screenshot_path).await {
             let error_text = error.to_string();
             let first_warn =
@@ -2153,6 +2165,7 @@ impl Agent {
         let llm_api_key = config_snapshot.llm_api_key.clone();
         let system_prompt = config_snapshot.system_prompt.clone();
         let username = config_snapshot.username.clone();
+        let chat_turn_limit = configured_chat_max_autonomous_turns(&config_snapshot);
 
         let loop_config = AgenticConfig {
             max_iterations: configured_agentic_max_iterations(&config_snapshot),
@@ -2204,7 +2217,13 @@ impl Agent {
                 )
                 .await;
 
-            for turn in 1..=CHAT_MAX_AUTONOMOUS_TURNS {
+            let mut turn = 1usize;
+            loop {
+                if let Some(limit) = chat_turn_limit {
+                    if turn > limit {
+                        break;
+                    }
+                }
                 let turn_trigger_message_ids: Vec<String> =
                     pending_messages.iter().map(|m| m.id.clone()).collect();
                 let turn_id = {
@@ -2231,10 +2250,9 @@ impl Agent {
                 };
 
                 self.emit(AgentEvent::Observation(format!(
-                    "Operator task [{}] turn {}/{}",
+                    "Operator task [{}] turn {}",
                     truncate_for_event(&conversation_id, 12),
-                    turn,
-                    CHAT_MAX_AUTONOMOUS_TURNS
+                    format_turn_progress(turn, chat_turn_limit)
                 )))
                 .await;
 
@@ -2340,13 +2358,13 @@ impl Agent {
                     &turn_control,
                     tool_count,
                     turn,
-                    CHAT_MAX_AUTONOMOUS_TURNS,
+                    chat_turn_limit,
                 );
                 let should_offload_to_background = should_offload_to_background_subtask(
                     &turn_control,
                     tool_count,
                     turn,
-                    CHAT_MAX_AUTONOMOUS_TURNS,
+                    chat_turn_limit,
                 );
                 let continuation_hint_text = format!(
                     "Previous autonomous turn: status={}, tools={}, summary=\"{}\", reason=\"{}\". Continue only if meaningful progress is still possible without operator input.",
@@ -2534,10 +2552,9 @@ impl Agent {
                 }
 
                 let mut trace_lines = vec![format!(
-                    "Private chat [{}] turn {}/{} via agentic loop ({} tool call(s))",
+                    "Private chat [{}] turn {} via agentic loop ({} tool call(s))",
                     truncate_for_event(&conversation_id, 12),
-                    turn,
-                    CHAT_MAX_AUTONOMOUS_TURNS,
+                    format_turn_progress(turn, chat_turn_limit),
                     tool_count
                 )];
                 if !result.thinking_blocks.is_empty() {
@@ -2564,6 +2581,7 @@ impl Agent {
 
                     pending_messages.clear();
                     continuation_hint = Some(continuation_hint_text.clone());
+                    turn += 1;
                     continue;
                 }
 
@@ -3256,8 +3274,15 @@ async fn run_background_chat_subtask(
     let mut turns_executed = 0usize;
     let mut total_tool_calls = 0usize;
     let mut continuation_hint = Some(request.initial_continuation_hint);
+    let background_turn_limit = configured_chat_background_max_turns(&request.config_snapshot);
 
-    for turn in 1..=CHAT_BACKGROUND_MAX_TURNS {
+    let mut turn = 1usize;
+    loop {
+        if let Some(limit) = background_turn_limit {
+            if turn > limit {
+                break;
+            }
+        }
         turns_executed = turn;
         let trigger_message_ids: Vec<String> = Vec::new();
         let turn_id = match db.begin_chat_turn(
@@ -3279,7 +3304,11 @@ async fn run_background_chat_subtask(
         let _ = event_tx.send(AgentEvent::ToolCallProgress {
             conversation_id: request.conversation_id.clone(),
             tool_name: "background_subtask".to_string(),
-            output_preview: format!("turn {}/{} running", turn, CHAT_BACKGROUND_MAX_TURNS),
+            output_preview: format!(
+                "[{}] turn {} running",
+                conversation_tag,
+                format_turn_progress(turn, background_turn_limit)
+            ),
         });
 
         let recent_chat_context = db
@@ -3305,13 +3334,21 @@ async fn run_background_chat_subtask(
         };
         let tool_event_tx = event_tx.clone();
         let tool_event_conversation_id = request.conversation_id.clone();
+        let tool_event_subtask_tag = conversation_tag.clone();
+        let tool_event_turn_limit = background_turn_limit;
+        let tool_event_turn = turn;
         let tool_event_callback = move |record: &ToolCallRecord| {
             let output_preview =
                 truncate_for_event(&record.output.to_llm_string().replace('\n', " "), 220);
             let _ = tool_event_tx.send(AgentEvent::ToolCallProgress {
                 conversation_id: tool_event_conversation_id.clone(),
                 tool_name: record.tool_name.clone(),
-                output_preview,
+                output_preview: format!(
+                    "[{}] turn {} {}",
+                    tool_event_subtask_tag,
+                    format_turn_progress(tool_event_turn, tool_event_turn_limit),
+                    output_preview
+                ),
             });
         };
 
@@ -3360,12 +3397,8 @@ async fn run_background_chat_subtask(
 
         let (response_without_concerns, concern_signals) = parse_concern_signals(&base_response);
         let turn_control = parse_turn_control(&response_without_concerns, tool_count);
-        let should_continue = should_continue_autonomous_turn(
-            &turn_control,
-            tool_count,
-            turn,
-            CHAT_BACKGROUND_MAX_TURNS,
-        );
+        let should_continue =
+            should_continue_autonomous_turn(&turn_control, tool_count, turn, background_turn_limit);
 
         let operator_visible_response = if !turn_control.operator_response.trim().is_empty() {
             turn_control.operator_response.clone()
@@ -3435,6 +3468,18 @@ async fn run_background_chat_subtask(
                 TurnDecision::Continue => "continue",
                 TurnDecision::Yield => "yield",
             };
+            let _ = event_tx.send(AgentEvent::ToolCallProgress {
+                conversation_id: request.conversation_id.clone(),
+                tool_name: "background_subtask".to_string(),
+                output_preview: format!(
+                    "[{}] turn {} decision={} status={} tools={}",
+                    conversation_tag,
+                    format_turn_progress(turn, background_turn_limit),
+                    decision_text,
+                    turn_control.status,
+                    tool_count
+                ),
+            });
 
             let _ = db.complete_chat_turn(
                 turn_id,
@@ -3454,8 +3499,10 @@ async fn run_background_chat_subtask(
         }
 
         let mut trace_lines = vec![format!(
-            "Background chat [{}] turn {}/{} ({} tool call(s))",
-            conversation_tag, turn, CHAT_BACKGROUND_MAX_TURNS, tool_count
+            "Background chat [{}] turn {} ({} tool call(s))",
+            conversation_tag,
+            format_turn_progress(turn, background_turn_limit),
+            tool_count
         )];
         if !result.thinking_blocks.is_empty() {
             trace_lines.push(format!(
@@ -3474,6 +3521,7 @@ async fn run_background_chat_subtask(
                 truncate_for_event(&operator_visible_response.replace('\n', " "), 220),
                 truncate_for_event(turn_control.reason.as_deref().unwrap_or(""), 180)
             ));
+            turn += 1;
             continue;
         }
 
@@ -3494,9 +3542,15 @@ async fn run_background_chat_subtask(
         };
     }
 
-    let fallback_message = "Background task reached its turn budget. Send a follow-up message if you want me to continue.";
-    let fallback_chat = format_chat_message_with_metadata(fallback_message, &[], &[]);
-    let _ = db.add_chat_message_in_conversation(&request.conversation_id, "agent", &fallback_chat);
+    if let Some(limit) = background_turn_limit {
+        let fallback_message = format!(
+            "Background task reached its turn budget ({} turns). Send a follow-up message if you want me to continue.",
+            limit
+        );
+        let fallback_chat = format_chat_message_with_metadata(&fallback_message, &[], &[]);
+        let _ =
+            db.add_chat_message_in_conversation(&request.conversation_id, "agent", &fallback_chat);
+    }
     let _ = event_tx.send(AgentEvent::ChatStreaming {
         conversation_id: request.conversation_id.clone(),
         content: String::new(),
@@ -3570,18 +3624,20 @@ fn should_continue_autonomous_turn(
     turn_control: &ParsedTurnControl,
     tool_count: usize,
     turn: usize,
-    turn_limit: usize,
+    turn_limit: Option<usize>,
 ) -> bool {
-    should_attempt_autonomous_continuation(turn_control, tool_count) && turn < turn_limit
+    should_attempt_autonomous_continuation(turn_control, tool_count)
+        && turn_limit.map(|limit| turn < limit).unwrap_or(true)
 }
 
 fn should_offload_to_background_subtask(
     turn_control: &ParsedTurnControl,
     tool_count: usize,
     turn: usize,
-    turn_limit: usize,
+    turn_limit: Option<usize>,
 ) -> bool {
-    should_attempt_autonomous_continuation(turn_control, tool_count) && turn >= turn_limit
+    should_attempt_autonomous_continuation(turn_control, tool_count)
+        && turn_limit.map(|limit| turn >= limit).unwrap_or(false)
 }
 
 fn parse_turn_control(response: &str, tool_call_count: usize) -> ParsedTurnControl {
@@ -4006,6 +4062,29 @@ fn configured_agentic_max_iterations(config: &AgentConfig) -> Option<usize> {
     }
 }
 
+fn configured_chat_max_autonomous_turns(config: &AgentConfig) -> Option<usize> {
+    if config.disable_chat_turn_limit {
+        None
+    } else {
+        Some(config.max_chat_autonomous_turns.max(1) as usize)
+    }
+}
+
+fn configured_chat_background_max_turns(config: &AgentConfig) -> Option<usize> {
+    if config.disable_background_subtask_turn_limit {
+        None
+    } else {
+        Some(config.max_background_subtask_turns.max(1) as usize)
+    }
+}
+
+fn format_turn_progress(turn: usize, turn_limit: Option<usize>) -> String {
+    match turn_limit {
+        Some(limit) => format!("{}/{}", turn, limit),
+        None => format!("{} (unbounded)", turn),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4080,6 +4159,37 @@ not a checklist item
         cfg.max_tool_iterations = 27;
         cfg.disable_tool_iteration_limit = true;
         assert_eq!(configured_agentic_max_iterations(&cfg), None);
+    }
+
+    #[test]
+    fn uses_configured_chat_turn_limits() {
+        let mut cfg = AgentConfig::default();
+        cfg.max_chat_autonomous_turns = 6;
+        cfg.max_background_subtask_turns = 12;
+        cfg.disable_chat_turn_limit = false;
+        cfg.disable_background_subtask_turn_limit = false;
+        assert_eq!(configured_chat_max_autonomous_turns(&cfg), Some(6));
+        assert_eq!(configured_chat_background_max_turns(&cfg), Some(12));
+    }
+
+    #[test]
+    fn clamps_chat_turn_limits_to_minimum_one() {
+        let mut cfg = AgentConfig::default();
+        cfg.max_chat_autonomous_turns = 0;
+        cfg.max_background_subtask_turns = 0;
+        cfg.disable_chat_turn_limit = false;
+        cfg.disable_background_subtask_turn_limit = false;
+        assert_eq!(configured_chat_max_autonomous_turns(&cfg), Some(1));
+        assert_eq!(configured_chat_background_max_turns(&cfg), Some(1));
+    }
+
+    #[test]
+    fn supports_unbounded_chat_turn_limits() {
+        let mut cfg = AgentConfig::default();
+        cfg.disable_chat_turn_limit = true;
+        cfg.disable_background_subtask_turn_limit = true;
+        assert_eq!(configured_chat_max_autonomous_turns(&cfg), None);
+        assert_eq!(configured_chat_background_max_turns(&cfg), None);
     }
 
     #[test]
@@ -4264,8 +4374,18 @@ not a checklist item
             "[turn_control]\n{\"decision\":\"continue\",\"status\":\"still_working\",\"needs_user_input\":false,\"user_message\":\"\",\"reason\":\"need more steps\"}\n[/turn_control]",
             1,
         );
-        assert!(!should_continue_autonomous_turn(&parsed, 1, 4, 4));
-        assert!(should_offload_to_background_subtask(&parsed, 1, 4, 4));
+        assert!(!should_continue_autonomous_turn(&parsed, 1, 4, Some(4)));
+        assert!(should_offload_to_background_subtask(&parsed, 1, 4, Some(4)));
+    }
+
+    #[test]
+    fn no_offload_when_turn_limit_is_unbounded() {
+        let parsed = parse_turn_control(
+            "[turn_control]\n{\"decision\":\"continue\",\"status\":\"still_working\",\"needs_user_input\":false,\"user_message\":\"\",\"reason\":\"need more steps\"}\n[/turn_control]",
+            1,
+        );
+        assert!(should_continue_autonomous_turn(&parsed, 1, 40, None));
+        assert!(!should_offload_to_background_subtask(&parsed, 1, 40, None));
     }
 
     #[test]

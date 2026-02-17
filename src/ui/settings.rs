@@ -115,6 +115,46 @@ impl SettingsPanel {
                     ui.add_space(8.0);
 
                     ui.horizontal(|ui| {
+                        ui.label("Max foreground chat turns:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.max_chat_autonomous_turns)
+                                .range(1..=64),
+                        );
+                    });
+                    ui.checkbox(
+                        &mut self.config.disable_chat_turn_limit,
+                        "Disable foreground chat turn limit (model decides)",
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Foreground continuation follows turn_control; limit is optional safety cap.",
+                        )
+                        .small()
+                        .weak(),
+                    );
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Max background subtask turns:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.max_background_subtask_turns)
+                                .range(1..=256),
+                        );
+                    });
+                    ui.checkbox(
+                        &mut self.config.disable_background_subtask_turn_limit,
+                        "Disable background subtask turn limit (model decides)",
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Background continuation follows turn_control; limit is optional safety cap.",
+                        )
+                        .small()
+                        .weak(),
+                    );
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
                         ui.label("Max posts per hour:");
                         ui.add(
                             egui::DragValue::new(&mut self.config.max_posts_per_hour)
@@ -388,7 +428,7 @@ impl SettingsPanel {
                         }
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label("Config: agent_config.toml");
+                            ui.label("Config: ponderer_config.toml (launch folder)");
                         });
                     });
                 });
