@@ -1,6 +1,6 @@
 # Living Loop Implementation Status
 
-**Last Updated:** 2026-02-15
+**Last Updated:** 2026-02-18
 
 ---
 
@@ -65,7 +65,8 @@ run_loop:
 ### Validation Baseline
 
 - `cargo fmt` passing.
-- `cargo test -q` passing (`141` tests at latest phase-5 checkpoint).
+- `cargo test -q --manifest-path ponderer_backend/Cargo.toml` passing (`159` tests).
+- `scripts/validate_living_loop_acceptance.sh` passing on host (2026-02-18): websocket state-change events + orientation snapshot persistence verified.
 
 ---
 
@@ -73,9 +74,9 @@ run_loop:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Living Loop parent feature (`Ponderer-141`) | 🟡 Open | Final integration and acceptance pass for LL feature umbrella |
-| Companion epic parent (`Ponderer-cpf`) | 🟡 Open | Parent tracking issue; most major sub-beads are now complete |
-| Background subtask runner (`Ponderer-cpf.8`) | 🟡 Open | Next concrete implementation item in ready queue |
+| Living Loop parent feature (`Ponderer-141`) | 🟡 In Progress | Integration and acceptance pass active with deterministic validation harness |
+| Companion epic parent (`Ponderer-cpf`) | ✅ Closed | Companion re-architecture umbrella complete; follow-on work tracked in Living Loop |
+| Background subtask runner (`Ponderer-cpf.8`) | ✅ Closed | Detached subtask handoff + callbacks implemented and validated in backend parity script |
 | Phase 6: ALMA meta-agent (`Ponderer-xj6`) | 🟡 Open (stretch) | Deferred/re-scoped; full autonomous self-codegen is currently out of scope |
 
 ---
@@ -132,4 +133,4 @@ run_loop:
 
 - This status supersedes the earlier "not started" phase checklist.
 - Bead IDs in this document reflect current tracker state (including completed `cpf.*` items).
-- Immediate next ready implementation item is `Ponderer-cpf.8`, with `Ponderer-141` and `Ponderer-cpf` remaining as umbrella issues.
+- Immediate focus is `Ponderer-141` integration hardening and acceptance while ALMA stretch (`Ponderer-xj6`) remains deferred.

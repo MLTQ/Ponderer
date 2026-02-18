@@ -22,11 +22,11 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - **Interacts with**: `/v1/conversations/:id/messages`, `/v1/conversations`.
 
 ### `persist_config(config)`
-- **Does**: Saves settings/character/workflow config via backend API and syncs local panel state from backend response.
+- **Does**: Saves settings/character/workflow config via backend API, syncs local panel state from backend response, and forces avatar reload so mood-avatar changes apply immediately.
 - **Interacts with**: `/v1/config`.
 
 ### `impl eframe::App for AgentApp` -- `update()`
-- **Does**: Main render loop. Processes WS events, updates status/chat on timer, renders chat + activity panels, and dispatches API actions for pause/config/message operations.
+- **Does**: Main render loop. Processes WS events, updates status/chat on timer, renders chat + activity panels, and dispatches API actions for pause/stop/config/message operations.
 - **Interacts with**: `chat::render_private_chat`, `chat::render_event_log`, `sprite::render_agent_sprite`.
 
 ## Contracts
@@ -40,4 +40,5 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 ## Notes
 - The app is no longer wired to in-process `Agent`/`AgentDatabase`/`flume` backend channels.
 - WS event stream runs continuously with reconnect; polling refresh every 2s is retained for list/history/status consistency.
+- Composer input is bottom-anchored so expanding live tool output does not push the text box off-screen.
 - UI-level API failures are surfaced in the activity log as `FrontendEvent::Error` entries.

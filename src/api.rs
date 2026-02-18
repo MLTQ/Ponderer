@@ -14,11 +14,17 @@ use tokio_tungstenite::tungstenite::Message;
 pub const DEFAULT_CHAT_CONVERSATION_ID: &str = "default";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ChatTurnPhase {
+    #[serde(alias = "Idle")]
     Idle,
+    #[serde(alias = "Processing")]
     Processing,
+    #[serde(alias = "Completed")]
     Completed,
+    #[serde(alias = "AwaitingApproval")]
     AwaitingApproval,
+    #[serde(alias = "Failed")]
     Failed,
 }
 
@@ -46,13 +52,21 @@ pub struct ChatMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentVisualState {
+    #[serde(alias = "Idle")]
     Idle,
+    #[serde(alias = "Reading")]
     Reading,
+    #[serde(alias = "Thinking")]
     Thinking,
+    #[serde(alias = "Writing")]
     Writing,
+    #[serde(alias = "Happy")]
     Happy,
+    #[serde(alias = "Confused")]
     Confused,
+    #[serde(alias = "Paused")]
     Paused,
 }
 
@@ -119,6 +133,11 @@ struct PauseStateResponse {
     paused: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct StopResponse {
+    stopped: bool,
+}
+
 #[derive(Clone)]
 pub struct ApiClient {
     http: reqwest::Client,
@@ -182,15 +201,22 @@ impl ApiClient {
     }
 
     pub async fn list_conversations(&self, limit: usize) -> Result<Vec<ChatConversation>> {
-        self.request(reqwest::Method::GET, "/v1/conversations")
+        let response = self
+            .request(reqwest::Method::GET, "/v1/conversations")
             .query(&[("limit", limit)])
             .send()
             .await?
             .error_for_status()
-            .context("GET /v1/conversations failed")?
-            .json::<Vec<ChatConversation>>()
+            .context("GET /v1/conversations failed")?;
+
+        let body = response
+            .text()
             .await
-            .context("Failed to decode conversation list")
+            .context("Failed to read conversation list payload")?;
+        serde_json::from_str::<Vec<ChatConversation>>(&body).context(format!(
+            "Failed to decode conversation list. Payload preview: {}",
+            body.chars().take(500).collect::<String>()
+        ))
     }
 
     pub async fn create_conversation(&self, title: Option<&str>) -> Result<ChatConversation> {
@@ -274,6 +300,19 @@ impl ApiClient {
             .await
             .context("Failed to decode toggle pause response")?;
         Ok(response.paused)
+    }
+
+    pub async fn stop_agent_turn(&self) -> Result<bool> {
+        let response = self
+            .request(reqwest::Method::POST, "/v1/agent/stop")
+            .send()
+            .await?
+            .error_for_status()
+            .context("POST /v1/agent/stop failed")?
+            .json::<StopResponse>()
+            .await
+            .context("Failed to decode stop response")?;
+        Ok(response.stopped)
     }
 
     pub async fn stream_events_forever(self, tx: Sender<FrontendEvent>) {
@@ -612,5 +651,42 @@ mod tests {
     fn api_client_from_env_picks_defaults() {
         let client = ApiClient::new("http://127.0.0.1:8787/".to_string(), None);
         assert_eq!(client.base_url(), "http://127.0.0.1:8787");
+    }
+
+    #[test]
+    fn chat_conversation_deserializes_snake_case_runtime_state() {
+        let payload = serde_json::json!([{
+            "id": "c1",
+            "session_id": "s1",
+            "title": "Chat",
+            "created_at": "2026-02-18T06:17:38.096788Z",
+            "updated_at": "2026-02-18T06:17:38.096788Z",
+            "runtime_state": "awaiting_approval",
+            "active_turn_id": null,
+            "message_count": 0,
+            "last_message_at": null
+        }]);
+
+        let parsed: Vec<ChatConversation> =
+            serde_json::from_value(payload).expect("decode conversation list");
+        assert_eq!(parsed.len(), 1);
+        assert!(matches!(
+            parsed[0].runtime_state,
+            ChatTurnPhase::AwaitingApproval
+        ));
+    }
+
+    #[test]
+    fn runtime_status_deserializes_snake_case_visual_state() {
+        let payload = serde_json::json!({
+            "paused": false,
+            "visual_state": "thinking",
+            "actions_this_hour": 2,
+            "last_action_time": "2026-02-18T06:17:38.096788Z"
+        });
+
+        let parsed: AgentRuntimeStatus =
+            serde_json::from_value(payload).expect("decode status");
+        assert!(matches!(parsed.visual_state, AgentVisualState::Thinking));
     }
 }

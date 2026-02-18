@@ -217,8 +217,7 @@ pub fn render_private_chat(
     );
     ui.add_space(8.0);
 
-    // Reserve room for the composer section rendered below this panel in app.rs.
-    let chat_scroll_height = (ui.available_height() - 140.0).max(120.0);
+    let chat_scroll_height = ui.available_height().max(120.0);
     ScrollArea::vertical()
         .stick_to_bottom(true)
         .max_height(chat_scroll_height)

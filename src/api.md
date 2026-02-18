@@ -14,7 +14,7 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - **Interacts with**: `ui/app.rs` conversation picker and chat renderer.
 
 ### Runtime DTOs (`AgentVisualState`, `AgentRuntimeStatus`)
-- **Does**: Frontend-side models for status badges/sprite selection and pause handling.
+- **Does**: Frontend-side models for status badges/sprite selection and pause/stop controls.
 - **Interacts with**: `ui/sprite.rs`, `ui/avatar.rs`, `ui/app.rs` header status.
 
 ### `FrontendEvent`
@@ -29,7 +29,7 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
-| `ui/app.rs` | `ApiClient` exposes config/chat/status/pause methods and event streaming | Renaming/removing API methods |
+| `ui/app.rs` | `ApiClient` exposes config/chat/status/pause/stop methods and event streaming | Renaming/removing API methods |
 | `ui/chat.rs` | `FrontendEvent` variants remain stable for rendering | Removing/renaming event variants |
 | Backend API | Routes and payload shapes under `/v1` match client decoding | Changing endpoint paths or schema fields |
 
@@ -37,3 +37,5 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - Backend URL defaults to `http://127.0.0.1:8787` (`PONDERER_BACKEND_URL` override).
 - Bearer token comes from `PONDERER_BACKEND_TOKEN`; if absent, requests run unauthenticated (useful only when backend auth mode is disabled).
 - WS URL is derived from HTTP base URL (`http -> ws`, `https -> wss`).
+- Enum decoding for chat/runtime state is compatibility-tolerant (`snake_case` plus legacy PascalCase aliases) to survive backend/frontend schema drift during upgrades.
+- Conversation list decode errors now include payload preview context to simplify diagnosing response-shape mismatches.

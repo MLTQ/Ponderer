@@ -209,6 +209,8 @@ impl AgentApp {
                 self.settings_panel.config = saved.clone();
                 self.character_panel.config = saved.clone();
                 self.comfy_settings_panel.load_workflow_from_config(&saved);
+                self.avatars = None;
+                self.avatars_loaded = false;
                 tracing::info!("Config saved through backend API");
             }
             Err(error) => {
@@ -374,6 +376,23 @@ impl eframe::App for AgentApp {
                         }
                     }
 
+                    if ui.button("⏹ Stop Turn").clicked() {
+                        match self.runtime.block_on(self.api_client.stop_agent_turn()) {
+                            Ok(_) => {
+                                let active = self.active_conversation_id.clone();
+                                self.streaming_chat_preview = None;
+                                self.clear_live_tool_progress(&active);
+                                self.refresh_conversations();
+                                self.refresh_chat_history();
+                                self.current_state = AgentVisualState::Idle;
+                            }
+                            Err(error) => {
+                                tracing::error!("Failed to stop active turn: {}", error);
+                                self.push_ui_error(format!("Failed to stop active turn: {}", error));
+                            }
+                        }
+                    }
+
                     if ui.button("⚙ Settings").clicked() {
                         self.settings_panel.show = true;
                     }
@@ -436,128 +455,122 @@ impl eframe::App for AgentApp {
                 .streaming_chat_preview
                 .as_ref()
                 .filter(|preview| preview.conversation_id == self.active_conversation_id)
-                .map(|preview| preview.content.as_str());
-            super::chat::render_private_chat(
-                ui,
-                &self.chat_history,
-                active_streaming_preview,
-                &mut self.chat_media_cache,
-            );
-
+                .map(|preview| preview.content.clone());
             let active_progress: Vec<LiveToolProgress> = self
                 .live_tool_progress
                 .iter()
                 .filter(|entry| entry.conversation_id == self.active_conversation_id)
                 .cloned()
                 .collect();
-            if !active_progress.is_empty() {
-                ui.add_space(6.0);
-                egui::CollapsingHeader::new("Live Agent Turn")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(
-                                "Real-time tool output while the agent is still working",
-                            )
-                            .small()
-                            .weak(),
-                        );
-                        ui.add_space(4.0);
-                        let mut global_lines: Vec<String> = Vec::new();
-                        let mut subtask_groups: Vec<(String, Vec<String>)> = Vec::new();
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("💬");
+                    let response = ui.add_sized(
+                        [ui.available_width() - 80.0, 72.0],
+                        egui::TextEdit::multiline(&mut self.user_input)
+                            .hint_text("Message Ponderer...")
+                            .desired_rows(3),
+                    );
 
-                        for entry in &active_progress {
-                            let line = format!("{} -> {}", entry.tool_name, entry.output_preview);
-                            if let Some(subtask_id) = entry.subtask_id.as_deref() {
-                                if let Some((_, lines)) =
-                                    subtask_groups.iter_mut().find(|(id, _)| id == subtask_id)
-                                {
-                                    lines.push(line);
-                                } else {
-                                    subtask_groups.push((subtask_id.to_string(), vec![line]));
-                                }
-                            } else {
-                                global_lines.push(line);
-                            }
-                        }
+                    let send_shortcut = response.has_focus()
+                        && ui.input(|i| {
+                            i.key_pressed(egui::Key::Enter)
+                                && !i.modifiers.shift
+                                && !i.modifiers.ctrl
+                                && !i.modifiers.command
+                                && !i.modifiers.alt
+                        });
+                    let send_clicked = ui.button("Send").clicked();
 
-                        if !global_lines.is_empty() {
-                            ui.label(egui::RichText::new("General").small().weak());
-                            egui::ScrollArea::vertical()
-                                .max_height(80.0)
-                                .stick_to_bottom(true)
-                                .show(ui, |ui| {
-                                    for line in &global_lines {
-                                        ui.monospace(line);
-                                    }
-                                });
-                            ui.add_space(6.0);
-                        }
-
-                        for (subtask_id, lines) in &subtask_groups {
-                            egui::CollapsingHeader::new(format!("Subtask {}", subtask_id))
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    egui::ScrollArea::vertical()
-                                        .max_height(120.0)
-                                        .stick_to_bottom(true)
-                                        .show(ui, |ui| {
-                                            for line in lines {
-                                                ui.monospace(line);
-                                            }
-                                        });
-                                });
-                        }
-
-                        if subtask_groups.is_empty() {
-                            egui::ScrollArea::vertical()
-                                .max_height(120.0)
-                                .stick_to_bottom(true)
-                                .show(ui, |ui| {
-                                    for line in &active_progress {
-                                        ui.monospace(format!(
-                                            "{} -> {}",
-                                            line.tool_name, line.output_preview
-                                        ));
-                                    }
-                                });
-                        }
-                    });
-            }
-
-            ui.separator();
-            ui.label(
-                egui::RichText::new("Press Enter to send. Shift+Enter inserts a newline.")
-                    .small()
-                    .weak(),
-            );
-            ui.add_space(4.0);
-
-            ui.horizontal(|ui| {
-                ui.label("💬");
-                let response = ui.add_sized(
-                    [ui.available_width() - 80.0, 72.0],
-                    egui::TextEdit::multiline(&mut self.user_input)
-                        .hint_text("Message Ponderer...")
-                        .desired_rows(3),
+                    if (send_shortcut || send_clicked) && !self.user_input.trim().is_empty() {
+                        let msg = self.user_input.trim().to_string();
+                        self.streaming_chat_preview = None;
+                        self.send_chat_message(&msg);
+                        self.user_input.clear();
+                    }
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("Press Enter to send. Shift+Enter inserts a newline.")
+                        .small()
+                        .weak(),
                 );
+                ui.separator();
 
-                let send_shortcut = response.has_focus()
-                    && ui.input(|i| {
-                        i.key_pressed(egui::Key::Enter)
-                            && !i.modifiers.shift
-                            && !i.modifiers.ctrl
-                            && !i.modifiers.command
-                            && !i.modifiers.alt
-                    });
-                let send_clicked = ui.button("Send").clicked();
+                if !active_progress.is_empty() {
+                    ui.add_space(6.0);
+                    egui::CollapsingHeader::new("Live Agent Turn")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Real-time tool output while the agent is still working",
+                                )
+                                .small()
+                                .weak(),
+                            );
+                            ui.add_space(4.0);
+                            egui::ScrollArea::vertical()
+                                .max_height(180.0)
+                                .stick_to_bottom(true)
+                                .show(ui, |ui| {
+                                    let mut global_lines: Vec<String> = Vec::new();
+                                    let mut subtask_groups: Vec<(String, Vec<String>)> = Vec::new();
 
-                if (send_shortcut || send_clicked) && !self.user_input.trim().is_empty() {
-                    let msg = self.user_input.trim().to_string();
-                    self.streaming_chat_preview = None;
-                    self.send_chat_message(&msg);
-                    self.user_input.clear();
+                                    for entry in &active_progress {
+                                        let line =
+                                            format!("{} -> {}", entry.tool_name, entry.output_preview);
+                                        if let Some(subtask_id) = entry.subtask_id.as_deref() {
+                                            if let Some((_, lines)) = subtask_groups
+                                                .iter_mut()
+                                                .find(|(id, _)| id == subtask_id)
+                                            {
+                                                lines.push(line);
+                                            } else {
+                                                subtask_groups.push((subtask_id.to_string(), vec![line]));
+                                            }
+                                        } else {
+                                            global_lines.push(line);
+                                        }
+                                    }
+
+                                    if !global_lines.is_empty() {
+                                        ui.label(egui::RichText::new("General").small().weak());
+                                        for line in &global_lines {
+                                            ui.monospace(line);
+                                        }
+                                        ui.add_space(6.0);
+                                    }
+
+                                    for (subtask_id, lines) in &subtask_groups {
+                                        egui::CollapsingHeader::new(format!("Subtask {}", subtask_id))
+                                            .default_open(true)
+                                            .show(ui, |ui| {
+                                                for line in lines {
+                                                    ui.monospace(line);
+                                                }
+                                            });
+                                    }
+
+                                    if subtask_groups.is_empty() {
+                                        for line in &active_progress {
+                                            ui.monospace(format!(
+                                                "{} -> {}",
+                                                line.tool_name, line.output_preview
+                                            ));
+                                        }
+                                    }
+                                });
+                        });
                 }
+
+                ui.add_space(6.0);
+                super::chat::render_private_chat(
+                    ui,
+                    &self.chat_history,
+                    active_streaming_preview.as_deref(),
+                    &mut self.chat_media_cache,
+                );
             });
         });
 

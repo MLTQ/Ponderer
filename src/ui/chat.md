@@ -10,7 +10,7 @@ Renders the activity log and private chat stream for the API-only frontend. Supp
 - **Interacts with**: `crate::api::FrontendEvent`.
 
 ### `render_private_chat(ui, messages, streaming_preview, media_cache)`
-- **Does**: Renders chat bubbles from `ChatMessage` records, including right-aligned operator rows, processing hints, metadata expanders, and inline media cards.
+- **Does**: Renders chat bubbles from `ChatMessage` records, including right-aligned operator rows, processing hints, metadata expanders, and inline media cards. Uses full available pane height (caller controls composer/live-output layout).
 - **Interacts with**: `crate::api::ChatMessage`.
 
 ### `parse_chat_payload(content)`

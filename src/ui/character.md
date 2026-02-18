@@ -1,13 +1,17 @@
 # character.rs
 
 ## Purpose
-Implements the Character Card panel, allowing users to import character cards from PNG files (with embedded metadata), edit character fields, preview the generated system prompt, and save the character to the agent config.
+Implements the Character Card panel, allowing users to import character cards from PNG files (with embedded metadata), edit character fields, configure mood-state avatar image paths, preview the generated system prompt, and save the character to the agent config.
 
 ## Components
 
 ### `CharacterPanel`
 - **Does**: Holds a mutable `AgentConfig` copy, visibility flag, cached avatar texture, and import error state
 - **Interacts with**: `AgentConfig` from `crate::config`, `crate::character_card::parse_character_card`
+
+### `render_mood_avatar_row(ui, label, value)`
+- **Does**: Renders one editable mood-avatar path row with `Browse` and `Clear` controls for PNG/JPG/JPEG/GIF files.
+- **Interacts with**: `rfd::FileDialog`, `AgentConfig` avatar fields.
 
 ### `CharacterPanel::new(config)`
 - **Does**: Constructs the panel with default hidden state and no cached texture
@@ -16,6 +20,7 @@ Implements the Character Card panel, allowing users to import character cards fr
 - **Does**: Draws the character card window with:
   - **Avatar & Import section**: Shows avatar thumbnail (128x128), browse button using `rfd::FileDialog` for PNG files, drag-and-drop support
   - **Character Details**: Editable fields for name, description, personality, scenario, example dialogue
+  - **Mood Avatars (UI States)**: Editable per-state paths (`avatar_idle`, `avatar_thinking`, `avatar_active`) with browse/clear controls
   - **System Prompt Preview**: Collapsible preview of the assembled prompt
   - **Action buttons**: Save, Clear, Cancel
 - Returns `Some(config)` on save (after updating `system_prompt` from character fields), `None` otherwise.
@@ -36,7 +41,7 @@ Implements the Character Card panel, allowing users to import character cards fr
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
 | `app.rs` | `render()` returns `Option<AgentConfig>`; on save, `app.rs` persists config and reloads agent | Changing return type breaks save flow |
-| `AgentConfig` | Fields: `character_name`, `character_description`, `character_personality`, `character_scenario`, `character_example_dialogue`, `character_avatar_path`, `system_prompt` | Renaming any field breaks this panel |
+| `AgentConfig` | Fields: `character_name`, `character_description`, `character_personality`, `character_scenario`, `character_example_dialogue`, `character_avatar_path`, `avatar_idle`, `avatar_thinking`, `avatar_active`, `system_prompt` | Renaming any field breaks this panel |
 | `crate::character_card` | `parse_character_card(&Path) -> Result<(ParsedCard, format, raw)>` | Changing parse API breaks import |
 
 ## Notes

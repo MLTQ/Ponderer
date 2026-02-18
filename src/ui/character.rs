@@ -9,6 +9,37 @@ pub struct CharacterPanel {
     import_error: Option<String>,
 }
 
+fn render_mood_avatar_row(ui: &mut egui::Ui, label: &str, value: &mut Option<String>) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+
+        let mut path = value.clone().unwrap_or_default();
+        if ui
+            .add_sized([340.0, 22.0], egui::TextEdit::singleline(&mut path))
+            .changed()
+        {
+            *value = if path.trim().is_empty() {
+                None
+            } else {
+                Some(path)
+            };
+        }
+
+        if ui.button("Browse").clicked() {
+            if let Some(file) = rfd::FileDialog::new()
+                .add_filter("Avatar Image", &["png", "jpg", "jpeg", "gif"])
+                .pick_file()
+            {
+                *value = Some(file.to_string_lossy().to_string());
+            }
+        }
+
+        if ui.button("Clear").clicked() {
+            *value = None;
+        }
+    });
+}
+
 impl CharacterPanel {
     pub fn new(config: AgentConfig) -> Self {
         Self {
@@ -120,6 +151,23 @@ impl CharacterPanel {
 
                     ui.label("Example Dialogue:");
                     ui.text_edit_multiline(&mut self.config.character_example_dialogue);
+                    ui.add_space(16.0);
+
+                    ui.separator();
+                    ui.heading("Mood Avatars (UI States)");
+                    ui.add_space(8.0);
+
+                    render_mood_avatar_row(ui, "Idle:", &mut self.config.avatar_idle);
+                    render_mood_avatar_row(ui, "Thinking:", &mut self.config.avatar_thinking);
+                    render_mood_avatar_row(ui, "Active:", &mut self.config.avatar_active);
+
+                    ui.label(
+                        egui::RichText::new(
+                            "Used for sprite states: idle/paused, thinking/reading/confused, writing/happy.",
+                        )
+                        .small()
+                        .weak(),
+                    );
                     ui.add_space(16.0);
 
                     ui.separator();
