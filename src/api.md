@@ -23,8 +23,12 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - **Interacts with**: `ui/sprite.rs`, `ui/avatar.rs`, `ui/app.rs` header status.
 
 ### `FrontendEvent`
-- **Does**: Normalized UI event stream derived from backend WS envelopes.
-- **Interacts with**: `ui/chat.rs` activity log and `ui/app.rs` streaming preview/tool-progress state.
+- **Does**: Normalized UI event stream derived from backend WS envelopes. Includes `ApprovalRequest { tool_name, reason }` for interactive approval popups.
+- **Interacts with**: `ui/chat.rs` activity log and `ui/app.rs` streaming preview/tool-progress state and approval popup.
+
+### `ApiClient::approve_tool`
+- **Does**: `POST /v1/agent/tools/:tool_name/approve` — grants session-level approval so the named tool can run autonomously without further prompts.
+- **Interacts with**: `server.rs` `approve_tool` handler → `Agent::grant_session_tool_approval` → `ToolRegistry::grant_session_approval`.
 
 ### Event mapping (`stream_events_forever`, `stream_events_once`, `map_event`)
 - **Does**: Reads WS JSON envelopes, maps backend event types to `FrontendEvent`, and reconnects on disconnect/failure.

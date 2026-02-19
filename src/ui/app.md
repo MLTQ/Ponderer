@@ -6,7 +6,7 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 ## Components
 
 ### `AgentApp`
-- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, and settings/character/workflow panels.
+- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character/workflow panels, and `pending_approvals: Vec<(String, String)>` for interactive tool-approval popups.
 - **Interacts with**: `crate::api::{ApiClient, FrontendEvent, ChatConversation, ChatMessage, AgentVisualState}`, UI subpanels.
 
 ### `AgentApp::new(api_client, fallback_config)`
@@ -48,3 +48,4 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - Main chat surface now uses fixed vertical regions (chat history, live tool output, composer) to prevent tool/output panels from overlapping chat bubbles or pushing the composer off-screen.
 - UI-level API failures are surfaced in the activity log as `FrontendEvent::Error` entries.
 - Prompt inspector windows are opened on demand from agent message rows and support toggling system-prompt visibility plus translucent source highlights over prompt sections.
+- `FrontendEvent::ApprovalRequest` is NOT pushed to the activity log; it is deduplicated and stored in `pending_approvals`. Each pending approval renders as an `egui::Window` popup (centered, non-collapsible) with "✅ Allow this session" and "✖ Dismiss" buttons. Approval calls `ApiClient::approve_tool`; dismiss just removes the entry from `pending_approvals`.
