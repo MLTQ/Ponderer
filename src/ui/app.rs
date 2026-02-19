@@ -34,6 +34,8 @@ pub struct AgentApp {
     prompt_inspector: Option<PromptInspectorWindow>,
     last_chat_refresh: std::time::Instant,
     show_activity_panel: bool,
+    /// Tool approval requests waiting for the user's response (tool_name, reason).
+    pending_approvals: Vec<(String, String)>,
 }
 
 struct StreamingChatPreview {
@@ -104,6 +106,7 @@ impl AgentApp {
             prompt_inspector: None,
             last_chat_refresh: std::time::Instant::now(),
             show_activity_panel: true,
+            pending_approvals: Vec::new(),
         };
 
         app.refresh_status();
@@ -374,9 +377,65 @@ impl eframe::App for AgentApp {
                     self.refresh_chat_history();
                     self.streaming_chat_preview = None;
                 }
+                FrontendEvent::ApprovalRequest { tool_name, reason } => {
+                    // Deduplicate: only add if not already pending
+                    if !self
+                        .pending_approvals
+                        .iter()
+                        .any(|(t, _)| t == tool_name)
+                    {
+                        self.pending_approvals
+                            .push((tool_name.clone(), reason.clone()));
+                    }
+                    // Don't push ApprovalRequest into the activity log — it gets its own popup
+                    continue;
+                }
                 _ => {}
             }
             self.events.push(event);
+        }
+
+        // --- Tool approval popup ---
+        // Render one window per pending approval. Clicks are processed below, after rendering.
+        let mut approve_tool: Option<String> = None;
+        let mut dismiss_tool: Option<String> = None;
+
+        for (tool_name, reason) in &self.pending_approvals {
+            let window_id = egui::Id::new(format!("approval_{}", tool_name));
+            egui::Window::new(format!("⚠️ Approval needed: {}", tool_name))
+                .id(window_id)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.label(reason.as_str());
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("✅ Allow this session")
+                                    .color(egui::Color32::from_rgb(80, 200, 100)),
+                            )
+                            .clicked()
+                        {
+                            approve_tool = Some(tool_name.clone());
+                        }
+                        if ui.button("✖ Dismiss").clicked() {
+                            dismiss_tool = Some(tool_name.clone());
+                        }
+                    });
+                });
+        }
+
+        if let Some(ref tool) = approve_tool {
+            match self.runtime.block_on(self.api_client.approve_tool(tool)) {
+                Ok(()) => tracing::info!("Session approval granted for: {}", tool),
+                Err(e) => self.push_ui_error(format!("Failed to approve tool: {}", e)),
+            }
+            self.pending_approvals.retain(|(t, _)| t != tool);
+        }
+        if let Some(ref tool) = dismiss_tool {
+            self.pending_approvals.retain(|(t, _)| t != tool);
         }
 
         egui::SidePanel::right("activity_panel")

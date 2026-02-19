@@ -123,6 +123,11 @@ pub enum FrontendEvent {
         summary: String,
     },
     Error(String),
+    /// Emitted when an autonomous tool call was blocked because it needs user approval.
+    ApprovalRequest {
+        tool_name: String,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -336,6 +341,19 @@ impl ApiClient {
             .await
             .context("Failed to decode toggle pause response")?;
         Ok(response.paused)
+    }
+
+    /// Grant session-level approval for a tool that was blocked in autonomous mode.
+    pub async fn approve_tool(&self, tool_name: &str) -> Result<()> {
+        self.request(
+            reqwest::Method::POST,
+            &format!("/v1/agent/tools/{}/approve", tool_name),
+        )
+        .send()
+        .await?
+        .error_for_status()
+        .with_context(|| format!("POST /v1/agent/tools/{}/approve failed", tool_name))?;
+        Ok(())
     }
 
     pub async fn stop_agent_turn(&self) -> Result<bool> {
@@ -574,6 +592,20 @@ fn map_event(envelope: ApiEventEnvelope) -> Option<FrontendEvent> {
                 .unwrap_or("Unknown backend error")
                 .to_string(),
         )),
+        "approval_request" => Some(FrontendEvent::ApprovalRequest {
+            tool_name: envelope
+                .payload
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            reason: envelope
+                .payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        }),
         _ => None,
     }
 }
