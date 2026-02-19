@@ -110,19 +110,38 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
             return;
         }
 
-        for event in events {
+        for (event_idx, event) in events.iter().enumerate() {
             match event {
                 FrontendEvent::Observation(text) => {
                     ui.label(RichText::new(text).color(Color32::LIGHT_BLUE));
                     ui.add_space(4.0);
                 }
                 FrontendEvent::ReasoningTrace(steps) => {
-                    ui.group(|ui| {
-                        ui.label(RichText::new("💭 Reasoning:").strong());
-                        for step in steps {
-                            ui.label(RichText::new(format!("  • {}", step)).color(Color32::GRAY));
-                        }
-                    });
+                    egui::CollapsingHeader::new(format!("💭 Reasoning ({} step(s))", steps.len()))
+                        .id_salt((event_idx, "reasoning"))
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            for (step_idx, step) in steps.iter().enumerate() {
+                                if step.chars().count() > 80 {
+                                    let header = truncate_for_ui(step, 80);
+                                    egui::CollapsingHeader::new(
+                                        RichText::new(format!("• {}", header))
+                                            .color(Color32::GRAY),
+                                    )
+                                    .id_salt((event_idx, step_idx))
+                                    .default_open(false)
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new(step.as_str()).color(Color32::GRAY),
+                                        );
+                                    });
+                                } else {
+                                    ui.label(
+                                        RichText::new(format!("• {}", step)).color(Color32::GRAY),
+                                    );
+                                }
+                            }
+                        });
                     ui.add_space(6.0);
                 }
                 FrontendEvent::ToolCallProgress {
