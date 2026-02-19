@@ -215,6 +215,9 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
                 FrontendEvent::ChatStreaming { .. } => {
                     // Streaming text is rendered in the chat pane, not activity log.
                 }
+                FrontendEvent::ApprovalRequest { .. } => {
+                    // Approval requests are rendered as a popup window, not in the activity log.
+                }
             }
         }
     });
