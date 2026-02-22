@@ -7,7 +7,7 @@ use super::comfy_settings::ComfySettingsPanel;
 use super::settings::SettingsPanel;
 use crate::api::{
     AgentVisualState, ApiClient, ChatConversation, ChatMessage, ChatTurnPhase, FrontendEvent,
-    DEFAULT_CHAT_CONVERSATION_ID,
+    OrientationSummary, DEFAULT_CHAT_CONVERSATION_ID,
 };
 use crate::config::AgentConfig;
 
@@ -36,6 +36,14 @@ pub struct AgentApp {
     show_activity_panel: bool,
     /// Tool approval requests waiting for the user's response (tool_name, reason).
     pending_approvals: Vec<(String, String)>,
+    /// Latest orientation summary received from the backend.
+    last_orientation: Option<OrientationSummary>,
+    /// Last action taken by the agent (short label string).
+    last_action: Option<String>,
+    /// Last journal entry summary.
+    last_journal: Option<String>,
+    /// Latest live LLM token stream content (any conversation, any cycle).
+    live_stream_text: Option<String>,
 }
 
 struct StreamingChatPreview {
@@ -107,6 +115,10 @@ impl AgentApp {
             last_chat_refresh: std::time::Instant::now(),
             show_activity_panel: true,
             pending_approvals: Vec::new(),
+            last_orientation: None,
+            last_action: None,
+            last_journal: None,
+            live_stream_text: None,
         };
 
         app.refresh_status();
@@ -349,6 +361,13 @@ impl eframe::App for AgentApp {
                     content,
                     done,
                 } => {
+                    // Capture global live stream regardless of which conversation is active.
+                    if *done {
+                        self.live_stream_text = None;
+                    } else if !content.trim().is_empty() {
+                        self.live_stream_text = Some(content.clone());
+                    }
+                    // Per-conversation streaming preview for the chat pane.
                     if *done && content.trim().is_empty() {
                         if self
                             .streaming_chat_preview
@@ -372,10 +391,19 @@ impl eframe::App for AgentApp {
                 } => {
                     self.push_live_tool_progress(conversation_id, tool_name, output_preview);
                 }
-                FrontendEvent::ActionTaken { action, .. } if action.contains("operator") => {
-                    self.refresh_conversations();
-                    self.refresh_chat_history();
-                    self.streaming_chat_preview = None;
+                FrontendEvent::ActionTaken { action, .. } => {
+                    self.last_action = Some(action.clone());
+                    if action.contains("operator") {
+                        self.refresh_conversations();
+                        self.refresh_chat_history();
+                        self.streaming_chat_preview = None;
+                    }
+                }
+                FrontendEvent::OrientationUpdate(summary) => {
+                    self.last_orientation = Some(summary.clone());
+                }
+                FrontendEvent::JournalWritten(summary) => {
+                    self.last_journal = Some(summary.clone());
                 }
                 FrontendEvent::ApprovalRequest { tool_name, reason } => {
                     // Deduplicate: only add if not already pending
@@ -440,16 +468,103 @@ impl eframe::App for AgentApp {
 
         egui::SidePanel::right("activity_panel")
             .resizable(true)
-            .default_width(320.0)
+            .default_width(340.0)
             .show_animated(ctx, self.show_activity_panel, |ui| {
-                ui.heading("Activity");
+                ui.heading("🧠 Mind");
                 ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new("Secondary event/reasoning log")
-                        .weak()
-                        .italics(),
-                );
-                ui.add_space(8.0);
+
+                // Zone 1: Current mind state snapshot.
+                ui.group(|ui| {
+                    ui.set_min_width(ui.available_width());
+                    if let Some(ref o) = self.last_orientation {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("🧭 {}", o.disposition))
+                                    .color(egui::Color32::LIGHT_YELLOW)
+                                    .small()
+                                    .strong(),
+                            );
+                            if o.anomaly_count > 0 {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "· {} anomal{}",
+                                        o.anomaly_count,
+                                        if o.anomaly_count == 1 { "y" } else { "ies" }
+                                    ))
+                                    .weak()
+                                    .small(),
+                                );
+                            }
+                        });
+                    }
+                    if let Some(ref action) = self.last_action {
+                        ui.label(
+                            egui::RichText::new(format!("⚡ {}", truncate_str(action, 80)))
+                                .small()
+                                .color(egui::Color32::LIGHT_GREEN),
+                        );
+                    }
+                    if let Some(ref journal) = self.last_journal {
+                        ui.label(
+                            egui::RichText::new(format!("📓 {}", truncate_str(journal, 80)))
+                                .small()
+                                .weak()
+                                .italics(),
+                        );
+                    }
+                    if self.last_orientation.is_none()
+                        && self.last_action.is_none()
+                        && self.last_journal.is_none()
+                    {
+                        ui.label(
+                            egui::RichText::new("Waiting for agent state...")
+                                .weak()
+                                .italics()
+                                .small(),
+                        );
+                    }
+                });
+
+                ui.add_space(4.0);
+
+                // Zone 2: Live LLM token stream.
+                egui::CollapsingHeader::new(
+                    egui::RichText::new("💭 Live Stream").small().strong(),
+                )
+                .id_salt("live_stream_header")
+                .default_open(true)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(110.0)
+                        .stick_to_bottom(true)
+                        .id_salt("live_stream_scroll")
+                        .show(ui, |ui| {
+                            if let Some(ref text) = self.live_stream_text {
+                                let preview = last_n_chars(text, 600);
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(preview)
+                                            .small()
+                                            .color(egui::Color32::from_gray(200)),
+                                    )
+                                    .wrap(),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("—")
+                                        .weak()
+                                        .small()
+                                        .italics(),
+                                );
+                            }
+                        });
+                });
+
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // Zone 3: Grouped turn history log.
                 super::chat::render_event_log(ui, &self.events);
             });
 
@@ -458,7 +573,31 @@ impl eframe::App for AgentApp {
                 super::sprite::render_agent_sprite(ui, &self.current_state, self.avatars.as_mut());
                 ui.vertical(|ui| {
                     ui.heading("Ponderer");
-                    ui.label(format!("Status: {:?}", self.current_state));
+                    ui.horizontal_wrapped(|ui| {
+                        let (state_text, state_color) = visual_state_display(&self.current_state);
+                        ui.label(
+                            egui::RichText::new(state_text)
+                                .color(state_color)
+                                .small()
+                                .strong(),
+                        );
+                        if let Some(ref o) = self.last_orientation {
+                            ui.label(egui::RichText::new("|").weak().small());
+                            ui.label(
+                                egui::RichText::new(format!("🧭 {}", o.disposition))
+                                    .color(egui::Color32::LIGHT_YELLOW)
+                                    .small(),
+                            );
+                        }
+                        if let Some(ref action) = self.last_action {
+                            ui.label(egui::RichText::new("|").weak().small());
+                            ui.label(
+                                egui::RichText::new(truncate_str(action, 50))
+                                    .weak()
+                                    .small(),
+                            );
+                        }
+                    });
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -595,55 +734,19 @@ impl eframe::App for AgentApp {
 
             if !active_progress.is_empty() {
                 ui.add_space(6.0);
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new("Live Agent Turn").strong());
-                    ui.label(
-                        egui::RichText::new(
-                            "Real-time tool output while the agent is still working",
-                        )
-                        .small()
-                        .weak(),
-                    );
-                    ui.add_space(4.0);
+                egui::CollapsingHeader::new(
+                    egui::RichText::new("⚡ Live Agent Turn").strong(),
+                )
+                .id_salt("live_agent_turn")
+                .default_open(true)
+                .show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .max_height(170.0)
                         .stick_to_bottom(true)
+                        .id_salt("live_turn_scroll")
                         .show(ui, |ui| {
-                            let mut global_lines: Vec<String> = Vec::new();
-                            let mut subtask_groups: Vec<(String, Vec<String>)> = Vec::new();
-
                             for entry in &active_progress {
-                                let line =
-                                    format!("{} -> {}", entry.tool_name, entry.output_preview);
-                                if let Some(subtask_id) = entry.subtask_id.as_deref() {
-                                    if let Some((_, lines)) =
-                                        subtask_groups.iter_mut().find(|(id, _)| id == subtask_id)
-                                    {
-                                        lines.push(line);
-                                    } else {
-                                        subtask_groups.push((subtask_id.to_string(), vec![line]));
-                                    }
-                                } else {
-                                    global_lines.push(line);
-                                }
-                            }
-
-                            if !global_lines.is_empty() {
-                                ui.label(egui::RichText::new("General").small().weak());
-                                for line in &global_lines {
-                                    ui.monospace(line);
-                                }
-                                ui.add_space(6.0);
-                            }
-
-                            for (subtask_id, lines) in &subtask_groups {
-                                egui::CollapsingHeader::new(format!("Subtask {}", subtask_id))
-                                    .default_open(true)
-                                    .show(ui, |ui| {
-                                        for line in lines {
-                                            ui.monospace(line);
-                                        }
-                                    });
+                                render_live_tool_entry(ui, entry);
                             }
                         });
                 });
@@ -795,6 +898,86 @@ impl eframe::App for AgentApp {
         }
 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+}
+
+fn visual_state_display(state: &AgentVisualState) -> (&'static str, egui::Color32) {
+    match state {
+        AgentVisualState::Idle => ("💤 Idle", egui::Color32::from_gray(150)),
+        AgentVisualState::Reading => ("👁 Reading", egui::Color32::from_rgb(200, 200, 100)),
+        AgentVisualState::Thinking => ("🤔 Thinking", egui::Color32::LIGHT_BLUE),
+        AgentVisualState::Writing => ("✍ Writing", egui::Color32::LIGHT_GREEN),
+        AgentVisualState::Happy => ("😊 Happy", egui::Color32::from_rgb(100, 255, 150)),
+        AgentVisualState::Confused => ("😕 Confused", egui::Color32::from_rgb(255, 150, 100)),
+        AgentVisualState::Paused => ("⏸ Paused", egui::Color32::GRAY),
+    }
+}
+
+fn render_live_tool_entry(ui: &mut egui::Ui, entry: &LiveToolProgress) {
+    let color = tool_badge_color(&entry.tool_name);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            egui::RichText::new(&entry.tool_name)
+                .color(color)
+                .strong()
+                .small(),
+        );
+        if let Some(ref subtask_id) = entry.subtask_id {
+            ui.label(egui::RichText::new(format!("[{}]", subtask_id)).weak().small());
+        }
+        let output = truncate_str(&entry.output_preview, 200);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(output)
+                    .small()
+                    .color(egui::Color32::from_gray(200)),
+            )
+            .wrap(),
+        );
+    });
+    ui.add_space(2.0);
+}
+
+fn tool_badge_color(tool_name: &str) -> egui::Color32 {
+    let name = tool_name.to_ascii_lowercase();
+    if name.starts_with("shell") || name.contains("run_command") || name.contains("bash") {
+        egui::Color32::from_rgb(255, 200, 60)
+    } else if name.contains("file") || name.starts_with("read") || name.starts_with("write") {
+        egui::Color32::from_rgb(100, 160, 255)
+    } else if name.starts_with("http") || name.starts_with("web") || name.starts_with("fetch") {
+        egui::Color32::from_rgb(200, 100, 255)
+    } else if name.starts_with("memory")
+        || name.starts_with("recall")
+        || name.starts_with("remember")
+    {
+        egui::Color32::from_rgb(80, 220, 130)
+    } else if name.starts_with("comfy") || name.contains("generate") || name.contains("image") {
+        egui::Color32::from_rgb(255, 140, 70)
+    } else if name.starts_with("vision") || name.contains("camera") || name.contains("screen") {
+        egui::Color32::from_rgb(255, 100, 150)
+    } else {
+        egui::Color32::from_rgb(180, 180, 180)
+    }
+}
+
+fn truncate_str(text: &str, max_chars: usize) -> String {
+    let mut out = String::with_capacity(text.len().min(max_chars + 4));
+    for (i, ch) in text.chars().enumerate() {
+        if i >= max_chars {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn last_n_chars(text: &str, n: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= n {
+        text.to_string()
+    } else {
+        chars[chars.len() - n..].iter().collect()
     }
 }
 

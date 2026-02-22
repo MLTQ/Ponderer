@@ -6,8 +6,11 @@ Renders the activity log and private chat stream for the API-only frontend. Supp
 ## Components
 
 ### `render_event_log(ui, events)`
-- **Does**: Renders `FrontendEvent` items with color-coded formatting for observations, reasoning traces, tool progress, actions, orientation summaries, journal writes, concern lifecycle updates, and errors. `ReasoningTrace` items render as nested `CollapsingHeader` widgets (outer: step count; inner: per-step, truncated at 80 chars with expand-to-full). `ApprovalRequest` events are silently skipped here — they are rendered as a popup window by `app.rs`.
+- **Does**: Groups events into collapsible cycle groups using `CycleStart` markers as boundaries. Each group (`CollapsingHeader`) is labeled with the cycle type and event count; the most recent is open by default, older ones collapsed. Events before the first `CycleStart` are rendered flat as a preamble. Delegates to `render_single_event` for per-item rendering. `ApprovalRequest` and `CycleStart` are silently skipped in `render_single_event`.
 - **Interacts with**: `crate::api::FrontendEvent`.
+
+### `render_single_event(ui, event, idx)`
+- **Does**: Renders one `FrontendEvent` with appropriate color, icon, and size. Uses `id_salt(idx)` for stable CollapsingHeader state. Tool progress shows tool name as a colored badge + truncated output inline. All non-visible variants (`StateChanged`, `ChatStreaming`, `ApprovalRequest`, `CycleStart`) are no-ops here.
 
 ### `render_private_chat(ui, messages, streaming_preview, media_cache) -> Option<String>`
 - **Does**: Renders chat bubbles from `ChatMessage` records, including right-aligned operator rows, per-agent-message `View Prompt` controls (when `turn_id` exists), processing hints, metadata expanders, and inline media cards. Returns requested `turn_id` when the operator clicks a prompt-inspection button.
@@ -36,4 +39,5 @@ Renders the activity log and private chat stream for the API-only frontend. Supp
 - Chat content is rendered in a dedicated top-down layout scope so it is not affected by the parent composer's bottom-up anchoring.
 - Chat scroll height now uses the exact remaining parent space (no forced minimum) to avoid overlap when the live tool panel expands.
 - `CollapsingHeader` widgets use `id_salt((event_idx, "reasoning"))` and `(event_idx, step_idx)` tuples so open/closed state persists independently per item even when the event list grows.
-- `FrontendEvent::ApprovalRequest` has a catch-all no-op arm in `render_event_log`; the popup is owned and rendered by `app.rs`.
+- `FrontendEvent::ApprovalRequest` and `CycleStart` have no-op arms in `render_single_event`; approvals are rendered as popups by `app.rs`, cycle starts are only used as group boundaries.
+- Streaming preview moved to AFTER the messages loop so the live bubble appears at the bottom of the chat pane, not the top. The empty-state check now also accounts for a live preview being present so the "no messages" placeholder doesn't show during the first streaming response.

@@ -128,6 +128,10 @@ pub enum FrontendEvent {
         tool_name: String,
         reason: String,
     },
+    /// Marks the start of a new agent cycle (engaged/ambient/heartbeat/etc.) for UI grouping.
+    CycleStart {
+        label: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -604,6 +608,14 @@ fn map_event(envelope: ApiEventEnvelope) -> Option<FrontendEvent> {
                 .get("reason")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
+                .to_string(),
+        }),
+        "cycle_start" => Some(FrontendEvent::CycleStart {
+            label: envelope
+                .payload
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("cycle")
                 .to_string(),
         }),
         _ => None,

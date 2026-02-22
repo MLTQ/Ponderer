@@ -110,117 +110,187 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
             return;
         }
 
-        for (event_idx, event) in events.iter().enumerate() {
-            match event {
-                FrontendEvent::Observation(text) => {
-                    ui.label(RichText::new(text).color(Color32::LIGHT_BLUE));
-                    ui.add_space(4.0);
-                }
-                FrontendEvent::ReasoningTrace(steps) => {
-                    egui::CollapsingHeader::new(format!("💭 Reasoning ({} step(s))", steps.len()))
-                        .id_salt((event_idx, "reasoning"))
-                        .default_open(false)
-                        .show(ui, |ui| {
-                            for (step_idx, step) in steps.iter().enumerate() {
-                                if step.chars().count() > 80 {
-                                    let header = truncate_for_ui(step, 80);
-                                    egui::CollapsingHeader::new(
-                                        RichText::new(format!("• {}", header))
-                                            .color(Color32::GRAY),
-                                    )
-                                    .id_salt((event_idx, step_idx))
-                                    .default_open(false)
-                                    .show(ui, |ui| {
-                                        ui.label(
-                                            RichText::new(step.as_str()).color(Color32::GRAY),
-                                        );
-                                    });
-                                } else {
-                                    ui.label(
-                                        RichText::new(format!("• {}", step)).color(Color32::GRAY),
-                                    );
-                                }
-                            }
-                        });
-                    ui.add_space(6.0);
-                }
-                FrontendEvent::ToolCallProgress {
-                    conversation_id,
-                    tool_name,
-                    output_preview,
-                } => {
-                    ui.label(
-                        RichText::new(format!(
-                            "🛠 [{}] {}: {}",
-                            conversation_id, tool_name, output_preview
-                        ))
-                        .color(Color32::KHAKI),
-                    );
-                    ui.add_space(4.0);
-                }
-                FrontendEvent::ActionTaken { action, result } => {
-                    ui.label(
-                        RichText::new(format!("✅ {}: {}", action, result)).color(Color32::GREEN),
-                    );
-                    ui.add_space(4.0);
-                }
-                FrontendEvent::OrientationUpdate(orientation) => {
-                    ui.label(
-                        RichText::new(format!(
-                            "🧭 Orientation: disposition={}, anomalies={}, salient={}",
-                            orientation.disposition,
-                            orientation.anomaly_count,
-                            orientation.salience_count
-                        ))
-                        .color(Color32::LIGHT_YELLOW),
-                    );
-                    ui.add_space(4.0);
-                }
-                FrontendEvent::JournalWritten(summary) => {
-                    ui.label(
-                        RichText::new(format!("📓 Journal: {}", summary))
-                            .color(Color32::LIGHT_GREEN),
-                    );
-                    ui.add_space(4.0);
-                }
-                FrontendEvent::ConcernCreated { id, summary } => {
-                    ui.label(
-                        RichText::new(format!(
-                            "🧷 Concern created [{}]: {}",
-                            id.chars().take(8).collect::<String>(),
-                            summary
-                        ))
-                        .color(Color32::LIGHT_BLUE),
-                    );
-                    ui.add_space(4.0);
-                }
-                FrontendEvent::ConcernTouched { id, summary } => {
-                    ui.label(
-                        RichText::new(format!(
-                            "🔁 Concern touched [{}]: {}",
-                            id.chars().take(8).collect::<String>(),
-                            summary
-                        ))
-                        .color(Color32::LIGHT_YELLOW),
-                    );
-                    ui.add_space(4.0);
-                }
-                FrontendEvent::Error(e) => {
-                    ui.label(RichText::new(format!("❌ Error: {}", e)).color(Color32::RED));
-                    ui.add_space(4.0);
-                }
-                FrontendEvent::StateChanged(_) => {
-                    // State changes are shown in header, not in log
-                }
-                FrontendEvent::ChatStreaming { .. } => {
-                    // Streaming text is rendered in the chat pane, not activity log.
-                }
-                FrontendEvent::ApprovalRequest { .. } => {
-                    // Approval requests are rendered as a popup window, not in the activity log.
-                }
+        // Find CycleStart positions to group events into turns.
+        let mut cycle_starts: Vec<(usize, String)> = Vec::new();
+        for (i, event) in events.iter().enumerate() {
+            if let FrontendEvent::CycleStart { label } = event {
+                cycle_starts.push((i, label.clone()));
             }
         }
+
+        if cycle_starts.is_empty() {
+            // No cycle markers yet — render flat for backwards compat.
+            for (i, event) in events.iter().enumerate() {
+                render_single_event(ui, event, i);
+            }
+            return;
+        }
+
+        // Render preamble events (before first CycleStart).
+        let preamble_end = cycle_starts[0].0;
+        for (i, event) in events[..preamble_end].iter().enumerate() {
+            render_single_event(ui, event, i);
+        }
+
+        // Render each cycle as a collapsible group; most recent open by default.
+        let cycle_count = cycle_starts.len();
+        for (gi, (start_idx, label)) in cycle_starts.iter().enumerate() {
+            let content_start = start_idx + 1;
+            let content_end = if gi + 1 < cycle_count {
+                cycle_starts[gi + 1].0
+            } else {
+                events.len()
+            };
+            let group_events = &events[content_start..content_end];
+            let is_last = gi == cycle_count - 1;
+
+            let visible_count = group_events
+                .iter()
+                .filter(|e| {
+                    !matches!(
+                        e,
+                        FrontendEvent::StateChanged(_)
+                            | FrontendEvent::ChatStreaming { .. }
+                            | FrontendEvent::CycleStart { .. }
+                    )
+                })
+                .count();
+
+            egui::CollapsingHeader::new(
+                RichText::new(format!("{} ({})", label, visible_count)).small(),
+            )
+            .id_salt(("cycle_group", gi))
+            .default_open(is_last)
+            .show(ui, |ui| {
+                for (ei, event) in group_events.iter().enumerate() {
+                    render_single_event(ui, event, gi * 10000 + ei);
+                }
+            });
+            ui.add_space(2.0);
+        }
     });
+}
+
+fn render_single_event(ui: &mut egui::Ui, event: &FrontendEvent, event_idx: usize) {
+    match event {
+        FrontendEvent::Observation(text) => {
+            ui.label(RichText::new(text).color(Color32::LIGHT_BLUE).small());
+            ui.add_space(3.0);
+        }
+        FrontendEvent::ReasoningTrace(steps) => {
+            egui::CollapsingHeader::new(
+                RichText::new(format!("💭 Reasoning ({} steps)", steps.len())).small(),
+            )
+            .id_salt((event_idx, "reasoning"))
+            .default_open(false)
+            .show(ui, |ui| {
+                for (step_idx, step) in steps.iter().enumerate() {
+                    if step.chars().count() > 80 {
+                        let header = truncate_for_ui(step, 80);
+                        egui::CollapsingHeader::new(
+                            RichText::new(format!("• {}", header))
+                                .color(Color32::GRAY)
+                                .small(),
+                        )
+                        .id_salt((event_idx, step_idx))
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(step.as_str()).color(Color32::GRAY).small());
+                        });
+                    } else {
+                        ui.label(
+                            RichText::new(format!("• {}", step))
+                                .color(Color32::GRAY)
+                                .small(),
+                        );
+                    }
+                }
+            });
+            ui.add_space(4.0);
+        }
+        FrontendEvent::ToolCallProgress {
+            tool_name,
+            output_preview,
+            ..
+        } => {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(format!("🛠 {}", tool_name))
+                        .color(Color32::KHAKI)
+                        .small()
+                        .strong(),
+                );
+                ui.label(
+                    RichText::new(truncate_for_ui(output_preview, 80))
+                        .weak()
+                        .small(),
+                );
+            });
+            ui.add_space(2.0);
+        }
+        FrontendEvent::ActionTaken { action, result } => {
+            ui.label(
+                RichText::new(format!("✅ {}: {}", action, result))
+                    .color(Color32::GREEN)
+                    .small(),
+            );
+            ui.add_space(3.0);
+        }
+        FrontendEvent::OrientationUpdate(orientation) => {
+            ui.label(
+                RichText::new(format!(
+                    "🧭 {} · {} anomalies · {} salient",
+                    orientation.disposition, orientation.anomaly_count, orientation.salience_count
+                ))
+                .color(Color32::LIGHT_YELLOW)
+                .small(),
+            );
+            ui.add_space(3.0);
+        }
+        FrontendEvent::JournalWritten(summary) => {
+            ui.label(
+                RichText::new(format!("📓 {}", summary))
+                    .color(Color32::LIGHT_GREEN)
+                    .small(),
+            );
+            ui.add_space(3.0);
+        }
+        FrontendEvent::ConcernCreated { id, summary } => {
+            ui.label(
+                RichText::new(format!(
+                    "🧷 [{}] {}",
+                    id.chars().take(8).collect::<String>(),
+                    summary
+                ))
+                .color(Color32::LIGHT_BLUE)
+                .small(),
+            );
+            ui.add_space(3.0);
+        }
+        FrontendEvent::ConcernTouched { id, summary } => {
+            ui.label(
+                RichText::new(format!(
+                    "🔁 [{}] {}",
+                    id.chars().take(8).collect::<String>(),
+                    summary
+                ))
+                .color(Color32::LIGHT_YELLOW)
+                .small(),
+            );
+            ui.add_space(3.0);
+        }
+        FrontendEvent::Error(e) => {
+            ui.label(RichText::new(format!("❌ {}", e)).color(Color32::RED).small());
+            ui.add_space(3.0);
+        }
+        FrontendEvent::StateChanged(_)
+        | FrontendEvent::ChatStreaming { .. }
+        | FrontendEvent::ApprovalRequest { .. }
+        | FrontendEvent::CycleStart { .. } => {
+            // Handled by caller (state in header, streaming in chat pane,
+            // approvals as popup, cycle starts used for grouping only).
+        }
+    }
 }
 
 /// Render the private chat interface between operator and agent
@@ -249,22 +319,10 @@ pub fn render_private_chat(
             .stick_to_bottom(true)
             .max_height(chat_scroll_height)
             .show(ui, |ui| {
-                if let Some(preview) = streaming_preview {
-                    let trimmed = preview.trim();
-                    if !trimmed.is_empty() {
-                        let row_width = ui.available_width();
-                        let bubble_cap = (row_width - 8.0).max(120.0);
-                        let max_bubble_width = (row_width * 0.7).max(120.0).min(bubble_cap);
-                        ui.horizontal_top(|ui| {
-                            ui.vertical(|ui| {
-                                render_streaming_preview_bubble(ui, trimmed, max_bubble_width);
-                            });
-                        });
-                        ui.add_space(8.0);
-                    }
-                }
+                let has_live_preview =
+                    streaming_preview.map_or(false, |p| !p.trim().is_empty());
 
-                if messages.is_empty() {
+                if messages.is_empty() && !has_live_preview {
                     ui.centered_and_justified(|ui| {
                         ui.label(
                             RichText::new(
@@ -324,6 +382,22 @@ pub fn render_private_chat(
                     }
 
                     ui.add_space(8.0);
+                }
+
+                // Render streaming preview AFTER messages so it appears at the bottom.
+                if let Some(preview) = streaming_preview {
+                    let trimmed = preview.trim();
+                    if !trimmed.is_empty() {
+                        let row_width = ui.available_width();
+                        let bubble_cap = (row_width - 8.0).max(120.0);
+                        let max_bubble_width = (row_width * 0.7).max(120.0).min(bubble_cap);
+                        ui.horizontal_top(|ui| {
+                            ui.vertical(|ui| {
+                                render_streaming_preview_bubble(ui, trimmed, max_bubble_width);
+                            });
+                        });
+                        ui.add_space(8.0);
+                    }
                 }
             });
     });

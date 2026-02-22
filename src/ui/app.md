@@ -6,8 +6,8 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 ## Components
 
 ### `AgentApp`
-- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character/workflow panels, and `pending_approvals: Vec<(String, String)>` for interactive tool-approval popups.
-- **Interacts with**: `crate::api::{ApiClient, FrontendEvent, ChatConversation, ChatMessage, AgentVisualState}`, UI subpanels.
+- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character/workflow panels, `pending_approvals` for approval popups, and mind-state fields: `last_orientation`, `last_action`, `last_journal`, `live_stream_text` (live LLM token stream, any conversation).
+- **Interacts with**: `crate::api::{ApiClient, FrontendEvent, ChatConversation, ChatMessage, AgentVisualState, OrientationSummary}`, UI subpanels.
 
 ### `AgentApp::new(api_client, fallback_config)`
 - **Does**: Creates a tokio runtime, starts WS event streaming, fetches config from backend (fallback on failure), initializes panels, then loads status/conversations/history.
@@ -40,6 +40,18 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 | `main.rs` | `AgentApp::new(ApiClient, AgentConfig)` constructor | Changing constructor signature |
 | `api.rs` | Stable method surface for config/chat/status/pause/event-stream | Renaming/removing client methods |
 | UI panel modules | `settings_panel.config` remains mutable for cross-panel synchronization | Changing panel state ownership |
+
+### Mind-state header (`visual_state_display`)
+- **Does**: Renders a rich status strip under the app title: visual-state emoji + color, orientation disposition chip, and last-action one-liner — all sourced from live WS events rather than polling.
+
+### `render_live_tool_entry` / `tool_badge_color`
+- **Does**: Formats each live tool-progress entry as a colored tool-name badge (color by category: shell=amber, files=blue, http=purple, memory=green, comfy=orange, vision=pink) + truncated monospace output.
+
+### Sidebar — three zones
+- **Does**: The right panel ("🧠 Mind") is divided into three zones: (1) mind-state group (orientation, last action, last journal), (2) "💭 Live Stream" collapsible section showing the last 600 chars of the active LLM token stream, (3) grouped turn-history log via `render_event_log`.
+
+### `truncate_str` / `last_n_chars`
+- **Does**: Local helpers for display truncation. `truncate_str` adds `…` at max_chars; `last_n_chars` returns the trailing N chars of a string.
 
 ## Notes
 - The app is no longer wired to in-process `Agent`/`AgentDatabase`/`flume` backend channels.

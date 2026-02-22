@@ -23,8 +23,8 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - **Interacts with**: `ui/sprite.rs`, `ui/avatar.rs`, `ui/app.rs` header status.
 
 ### `FrontendEvent`
-- **Does**: Normalized UI event stream derived from backend WS envelopes. Includes `ApprovalRequest { tool_name, reason }` for interactive approval popups.
-- **Interacts with**: `ui/chat.rs` activity log and `ui/app.rs` streaming preview/tool-progress state and approval popup.
+- **Does**: Normalized UI event stream derived from backend WS envelopes. Includes `ApprovalRequest { tool_name, reason }` for interactive approval popups, and `CycleStart { label }` used by `chat.rs` to group the turn-history log into collapsible cycle groups.
+- **Interacts with**: `ui/chat.rs` activity log and `ui/app.rs` streaming preview/tool-progress state, approval popup, and mind-state tracking fields.
 
 ### `ApiClient::approve_tool`
 - **Does**: `POST /v1/agent/tools/:tool_name/approve` — grants session-level approval so the named tool can run autonomously without further prompts.
