@@ -44,6 +44,8 @@ pub struct AgentApp {
     last_journal: Option<String>,
     /// Latest live LLM token stream content (any conversation, any cycle).
     live_stream_text: Option<String>,
+    /// Conversation pending delete confirmation (id).
+    confirm_delete_conversation_id: Option<String>,
 }
 
 struct StreamingChatPreview {
@@ -119,6 +121,7 @@ impl AgentApp {
             last_action: None,
             last_journal: None,
             live_stream_text: None,
+            confirm_delete_conversation_id: None,
         };
 
         app.refresh_status();
@@ -255,6 +258,37 @@ impl AgentApp {
             Err(error) => {
                 tracing::error!("Failed to create conversation: {}", error);
                 self.push_ui_error(format!("Failed to create conversation: {}", error));
+            }
+        }
+    }
+
+    fn delete_conversation(&mut self, conversation_id: &str) {
+        match self
+            .runtime
+            .block_on(self.api_client.delete_conversation(conversation_id))
+        {
+            Ok(()) => {
+                // If we deleted the active conversation, switch to a different one.
+                if self.active_conversation_id == conversation_id {
+                    self.streaming_chat_preview = None;
+                    self.live_tool_progress
+                        .retain(|e| e.conversation_id != conversation_id);
+                    self.refresh_conversations();
+                    // Pick the first remaining conversation, or create a new one.
+                    if let Some(first) = self.conversations.first() {
+                        self.active_conversation_id = first.id.clone();
+                    } else {
+                        self.create_new_conversation();
+                        return;
+                    }
+                    self.refresh_chat_history();
+                } else {
+                    self.refresh_conversations();
+                }
+            }
+            Err(error) => {
+                tracing::error!("Failed to delete conversation: {}", error);
+                self.push_ui_error(format!("Failed to delete conversation: {}", error));
             }
         }
     }
@@ -683,6 +717,17 @@ impl eframe::App for AgentApp {
                     self.create_new_conversation();
                 }
 
+                if ui
+                    .button(
+                        egui::RichText::new("Delete").color(egui::Color32::from_rgb(200, 80, 80)),
+                    )
+                    .on_hover_text("Delete this conversation")
+                    .clicked()
+                {
+                    self.confirm_delete_conversation_id =
+                        Some(self.active_conversation_id.clone());
+                }
+
                 if self.active_conversation_id != previous_conversation_id {
                     self.streaming_chat_preview = None;
                     self.refresh_chat_history();
@@ -782,6 +827,50 @@ impl eframe::App for AgentApp {
             });
             ui.add_space(8.0);
         });
+
+        // Delete-conversation confirmation dialog.
+        if let Some(conv_id) = self.confirm_delete_conversation_id.clone() {
+            let title_label = self
+                .conversations
+                .iter()
+                .find(|c| c.id == conv_id)
+                .map(|c| c.title.clone())
+                .unwrap_or_else(|| conv_id.chars().take(12).collect());
+            let mut open = true;
+            egui::Window::new("Delete Conversation?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.label(format!("Delete \"{}\"?", title_label));
+                    ui.label(
+                        egui::RichText::new("This cannot be undone.")
+                            .small()
+                            .weak(),
+                    );
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("Delete")
+                                    .color(egui::Color32::from_rgb(200, 80, 80)),
+                            )
+                            .clicked()
+                        {
+                            let id_to_delete = conv_id.clone();
+                            self.confirm_delete_conversation_id = None;
+                            self.delete_conversation(&id_to_delete);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.confirm_delete_conversation_id = None;
+                        }
+                    });
+                });
+            if !open {
+                self.confirm_delete_conversation_id = None;
+            }
+        }
 
         if let Some(inspector) = self.prompt_inspector.as_mut() {
             let mut open = inspector.open;

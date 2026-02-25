@@ -260,6 +260,46 @@ impl ApiClient {
             .context("Failed to decode created conversation")
     }
 
+    pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.request(
+            reqwest::Method::DELETE,
+            &format!("/v1/conversations/{}", conversation_id),
+        )
+        .send()
+        .await?
+        .error_for_status()
+        .with_context(|| format!("DELETE /v1/conversations/{} failed", conversation_id))?;
+        Ok(())
+    }
+
+    pub async fn update_conversation_title(
+        &self,
+        conversation_id: &str,
+        title: &str,
+    ) -> Result<ChatConversation> {
+        #[derive(Serialize)]
+        struct UpdateConversationRequest<'a> {
+            title: &'a str,
+        }
+        self.request(
+            reqwest::Method::PATCH,
+            &format!("/v1/conversations/{}", conversation_id),
+        )
+        .json(&UpdateConversationRequest { title })
+        .send()
+        .await?
+        .error_for_status()
+        .with_context(|| {
+            format!(
+                "PATCH /v1/conversations/{} failed",
+                conversation_id
+            )
+        })?
+        .json::<ChatConversation>()
+        .await
+        .context("Failed to decode updated conversation")
+    }
+
     pub async fn list_messages(
         &self,
         conversation_id: &str,
