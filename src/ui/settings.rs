@@ -37,6 +37,61 @@ impl SettingsPanel {
                     ui.add_space(16.0);
 
                     ui.separator();
+                    ui.heading("Telegram Bot");
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Bot token:    ");
+                        let mut token_str = self
+                            .config
+                            .telegram_bot_token
+                            .clone()
+                            .unwrap_or_default();
+                        if ui.text_edit_singleline(&mut token_str).changed() {
+                            self.config.telegram_bot_token = if token_str.trim().is_empty() {
+                                None
+                            } else {
+                                Some(token_str.trim().to_string())
+                            };
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(
+                            "Get a token from @BotFather on Telegram. Leave blank to disable.",
+                        )
+                        .small()
+                        .weak(),
+                    );
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Authorized chat ID:");
+                        let mut id_str = self
+                            .config
+                            .telegram_chat_id
+                            .map(|id| id.to_string())
+                            .unwrap_or_default();
+                        if ui.text_edit_singleline(&mut id_str).changed() {
+                            self.config.telegram_chat_id = id_str.trim().parse::<i64>().ok();
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(
+                            "Optional but recommended — restricts the bot to your account only.\n\
+                             To find your ID: message the bot, then open\n\
+                             https://api.telegram.org/bot<TOKEN>/getUpdates",
+                        )
+                        .small()
+                        .weak(),
+                    );
+                    ui.label(
+                        egui::RichText::new("Telegram settings take effect after restart.")
+                            .small()
+                            .color(egui::Color32::from_rgb(200, 180, 100)),
+                    );
+                    ui.add_space(16.0);
+
+                    ui.separator();
                     ui.heading("LLM Configuration");
                     ui.add_space(8.0);
 
