@@ -97,7 +97,11 @@ impl ChatMediaCache {
     }
 }
 
-pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
+pub fn render_event_log(
+    ui: &mut egui::Ui,
+    events: &[FrontendEvent],
+    detail_popup: &mut Option<String>,
+) {
     ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
         if events.is_empty() {
             ui.centered_and_justified(|ui| {
@@ -121,7 +125,7 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
         if cycle_starts.is_empty() {
             // No cycle markers yet — render flat for backwards compat.
             for (i, event) in events.iter().enumerate() {
-                render_single_event(ui, event, i);
+                render_single_event(ui, event, i, detail_popup);
             }
             return;
         }
@@ -129,7 +133,7 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
         // Render preamble events (before first CycleStart).
         let preamble_end = cycle_starts[0].0;
         for (i, event) in events[..preamble_end].iter().enumerate() {
-            render_single_event(ui, event, i);
+            render_single_event(ui, event, i, detail_popup);
         }
 
         // Render each cycle as a collapsible group; most recent open by default.
@@ -163,7 +167,7 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
             .default_open(is_last)
             .show(ui, |ui| {
                 for (ei, event) in group_events.iter().enumerate() {
-                    render_single_event(ui, event, gi * 10000 + ei);
+                    render_single_event(ui, event, gi * 10000 + ei, detail_popup);
                 }
             });
             ui.add_space(2.0);
@@ -171,10 +175,56 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
     });
 }
 
-fn render_single_event(ui: &mut egui::Ui, event: &FrontendEvent, event_idx: usize) {
+/// Threshold above which an expand button is shown.
+const EXPAND_THRESHOLD: usize = 100;
+
+/// Render one line with optional text truncation + an expand button.
+/// If `full_text` exceeds `EXPAND_THRESHOLD` chars, show a truncated version
+/// followed by a small "⋯" button that populates `detail_popup`.
+fn event_line(
+    ui: &mut egui::Ui,
+    full_text: &str,
+    color: Color32,
+    detail_popup: &mut Option<String>,
+) {
+    if full_text.chars().count() > EXPAND_THRESHOLD {
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(truncate_for_ui(full_text, EXPAND_THRESHOLD))
+                        .color(color)
+                        .small(),
+                )
+                .wrap(),
+            );
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("⋯").small().weak())
+                        .frame(false)
+                        .small(),
+                )
+                .on_hover_text("View full message")
+                .clicked()
+            {
+                *detail_popup = Some(full_text.to_string());
+            }
+        });
+    } else {
+        ui.add(
+            egui::Label::new(RichText::new(full_text).color(color).small()).wrap(),
+        );
+    }
+}
+
+fn render_single_event(
+    ui: &mut egui::Ui,
+    event: &FrontendEvent,
+    event_idx: usize,
+    detail_popup: &mut Option<String>,
+) {
     match event {
         FrontendEvent::Observation(text) => {
-            ui.label(RichText::new(text).color(Color32::LIGHT_BLUE).small());
+            event_line(ui, text, Color32::LIGHT_BLUE, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::ReasoningTrace(steps) => {
@@ -195,7 +245,12 @@ fn render_single_event(ui: &mut egui::Ui, event: &FrontendEvent, event_idx: usiz
                         .id_salt((event_idx, step_idx))
                         .default_open(false)
                         .show(ui, |ui| {
-                            ui.label(RichText::new(step.as_str()).color(Color32::GRAY).small());
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(step.as_str()).color(Color32::GRAY).small(),
+                                )
+                                .wrap(),
+                            );
                         });
                     } else {
                         ui.label(
@@ -220,67 +275,72 @@ fn render_single_event(ui: &mut egui::Ui, event: &FrontendEvent, event_idx: usiz
                         .small()
                         .strong(),
                 );
-                ui.label(
-                    RichText::new(truncate_for_ui(output_preview, 80))
-                        .weak()
-                        .small(),
-                );
+                if output_preview.chars().count() > EXPAND_THRESHOLD {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(truncate_for_ui(output_preview, EXPAND_THRESHOLD))
+                                .weak()
+                                .small(),
+                        )
+                        .wrap(),
+                    );
+                    let full = format!("🛠 {}\n\n{}", tool_name, output_preview);
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("⋯").small().weak())
+                                .frame(false)
+                                .small(),
+                        )
+                        .on_hover_text("View full output")
+                        .clicked()
+                    {
+                        *detail_popup = Some(full);
+                    }
+                } else {
+                    ui.label(RichText::new(output_preview.as_str()).weak().small());
+                }
             });
             ui.add_space(2.0);
         }
         FrontendEvent::ActionTaken { action, result } => {
-            ui.label(
-                RichText::new(format!("✅ {}: {}", action, result))
-                    .color(Color32::GREEN)
-                    .small(),
-            );
+            let full = format!("✅ {}: {}", action, result);
+            event_line(ui, &full, Color32::GREEN, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::OrientationUpdate(orientation) => {
-            ui.label(
-                RichText::new(format!(
-                    "🧭 {} · {} anomalies · {} salient",
-                    orientation.disposition, orientation.anomaly_count, orientation.salience_count
-                ))
-                .color(Color32::LIGHT_YELLOW)
-                .small(),
+            let full = format!(
+                "🧭 {} · {} anomalies · {} salient",
+                orientation.disposition, orientation.anomaly_count, orientation.salience_count
             );
+            event_line(ui, &full, Color32::LIGHT_YELLOW, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::JournalWritten(summary) => {
-            ui.label(
-                RichText::new(format!("📓 {}", summary))
-                    .color(Color32::LIGHT_GREEN)
-                    .small(),
-            );
+            let full = format!("📓 {}", summary);
+            event_line(ui, &full, Color32::LIGHT_GREEN, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::ConcernCreated { id, summary } => {
-            ui.label(
-                RichText::new(format!(
-                    "🧷 [{}] {}",
-                    id.chars().take(8).collect::<String>(),
-                    summary
-                ))
-                .color(Color32::LIGHT_BLUE)
-                .small(),
+            let full = format!(
+                "🧷 [{}] {}",
+                id.chars().take(8).collect::<String>(),
+                summary
             );
+            event_line(ui, &full, Color32::LIGHT_BLUE, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::ConcernTouched { id, summary } => {
-            ui.label(
-                RichText::new(format!(
-                    "🔁 [{}] {}",
-                    id.chars().take(8).collect::<String>(),
-                    summary
-                ))
-                .color(Color32::LIGHT_YELLOW)
-                .small(),
+            let full = format!(
+                "🔁 [{}] {}",
+                id.chars().take(8).collect::<String>(),
+                summary
             );
+            event_line(ui, &full, Color32::LIGHT_YELLOW, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::Error(e) => {
-            ui.label(RichText::new(format!("❌ {}", e)).color(Color32::RED).small());
+            let full = format!("❌ {}", e);
+            event_line(ui, &full, Color32::RED, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::StateChanged(_)

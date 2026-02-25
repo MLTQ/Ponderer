@@ -46,6 +46,8 @@ pub struct AgentApp {
     live_stream_text: Option<String>,
     /// Conversation pending delete confirmation (id).
     confirm_delete_conversation_id: Option<String>,
+    /// Full text to show in the Mind event detail pop-out window.
+    event_detail_popup: Option<String>,
 }
 
 struct StreamingChatPreview {
@@ -122,6 +124,7 @@ impl AgentApp {
             last_journal: None,
             live_stream_text: None,
             confirm_delete_conversation_id: None,
+            event_detail_popup: None,
         };
 
         app.refresh_status();
@@ -593,7 +596,7 @@ impl eframe::App for AgentApp {
                 ui.add_space(4.0);
 
                 // Zone 3: Grouped turn history log.
-                super::chat::render_event_log(ui, &self.events);
+                super::chat::render_event_log(ui, &self.events, &mut self.event_detail_popup);
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -827,6 +830,35 @@ impl eframe::App for AgentApp {
             });
             ui.add_space(8.0);
         });
+
+        // Mind event detail pop-out window.
+        if let Some(ref text) = self.event_detail_popup.clone() {
+            let mut open = true;
+            egui::Window::new("Event Detail")
+                .collapsible(false)
+                .resizable(true)
+                .default_size([520.0, 380.0])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(text.as_str()).small().monospace(),
+                                )
+                                .wrap(),
+                            );
+                        });
+                    ui.add_space(6.0);
+                    if ui.button("Close").clicked() {
+                        self.event_detail_popup = None;
+                    }
+                });
+            if !open {
+                self.event_detail_popup = None;
+            }
+        }
 
         // Delete-conversation confirmation dialog.
         if let Some(conv_id) = self.confirm_delete_conversation_id.clone() {
