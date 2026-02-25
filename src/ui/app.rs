@@ -837,23 +837,37 @@ impl eframe::App for AgentApp {
             egui::Window::new("Event Detail")
                 .collapsible(false)
                 .resizable(true)
-                .default_size([520.0, 380.0])
+                .default_size([560.0, 420.0])
                 .open(&mut open)
                 .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(text.as_str()).small().monospace(),
-                                )
-                                .wrap(),
-                            );
-                        });
-                    ui.add_space(6.0);
-                    if ui.button("Close").clicked() {
-                        self.event_detail_popup = None;
-                    }
+                    ui.with_layout(
+                        egui::Layout::bottom_up(egui::Align::LEFT),
+                        |ui| {
+                            ui.add_space(4.0);
+                            if ui.button("Close").clicked() {
+                                self.event_detail_popup = None;
+                            }
+                            ui.add_space(4.0);
+                            ui.separator();
+                            // Fill the remaining space (above the Close button) with a
+                            // scrollable, selectable, read-only text editor.  TextEdit
+                            // handles arbitrarily large text without truncation and lets
+                            // the user select/copy the content.
+                            let available = ui.available_size();
+                            let mut buf = text.clone();
+                            egui::ScrollArea::vertical()
+                                .id_salt("event_detail_scroll")
+                                .show(ui, |ui| {
+                                    ui.add_sized(
+                                        available,
+                                        egui::TextEdit::multiline(&mut buf)
+                                            .font(egui::TextStyle::Monospace)
+                                            .interactive(false)
+                                            .desired_width(f32::INFINITY),
+                                    );
+                                });
+                        },
+                    );
                 });
             if !open {
                 self.event_detail_popup = None;
