@@ -423,53 +423,47 @@ impl eframe::App for AgentApp {
             self.events.push(event);
         }
 
-        // --- Tool approval popup ---
-        // Render one window per pending approval. Clicks are processed below, after rendering.
+        // --- Approval requests ---
+        // Rendered inside the activity panel (not as a floating egui::Window) so they appear
+        // reliably on all platforms. egui::Window::anchor is fragile on Linux/Wayland: the
+        // viewport rect may not be known on the first frame, causing the window to be placed
+        // off-screen and remembered there by ID, never recovering.
         let mut approve_tool: Option<String> = None;
         let mut dismiss_tool: Option<String> = None;
-
-        for (tool_name, reason) in &self.pending_approvals {
-            let window_id = egui::Id::new(format!("approval_{}", tool_name));
-            egui::Window::new(format!("⚠️ Approval needed: {}", tool_name))
-                .id(window_id)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label(reason.as_str());
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(
-                                egui::RichText::new("✅ Allow this session")
-                                    .color(egui::Color32::from_rgb(80, 200, 100)),
-                            )
-                            .clicked()
-                        {
-                            approve_tool = Some(tool_name.clone());
-                        }
-                        if ui.button("✖ Dismiss").clicked() {
-                            dismiss_tool = Some(tool_name.clone());
-                        }
-                    });
-                });
-        }
-
-        if let Some(ref tool) = approve_tool {
-            match self.runtime.block_on(self.api_client.approve_tool(tool)) {
-                Ok(()) => tracing::info!("Session approval granted for: {}", tool),
-                Err(e) => self.push_ui_error(format!("Failed to approve tool: {}", e)),
-            }
-            self.pending_approvals.retain(|(t, _)| t != tool);
-        }
-        if let Some(ref tool) = dismiss_tool {
-            self.pending_approvals.retain(|(t, _)| t != tool);
-        }
 
         egui::SidePanel::right("activity_panel")
             .resizable(true)
             .default_width(340.0)
             .show_animated(ctx, self.show_activity_panel, |ui| {
+                // Pending approvals at the very top — hard to miss.
+                for (tool_name, reason) in &self.pending_approvals {
+                    ui.group(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.colored_label(
+                            egui::Color32::from_rgb(255, 160, 50),
+                            format!("! Approval needed: {}", tool_name),
+                        );
+                        ui.add_space(2.0);
+                        ui.add(egui::Label::new(egui::RichText::new(reason.as_str()).small()).wrap());
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(
+                                    egui::RichText::new("Allow this session")
+                                        .color(egui::Color32::from_rgb(80, 200, 100)),
+                                )
+                                .clicked()
+                            {
+                                approve_tool = Some(tool_name.clone());
+                            }
+                            if ui.button("Dismiss").clicked() {
+                                dismiss_tool = Some(tool_name.clone());
+                            }
+                        });
+                    });
+                    ui.add_space(4.0);
+                }
+
                 ui.heading("🧠 Mind");
                 ui.add_space(4.0);
 
@@ -895,6 +889,17 @@ impl eframe::App for AgentApp {
         {
             let updated = self.settings_panel.config.clone();
             self.persist_config(updated);
+        }
+
+        if let Some(ref tool) = approve_tool {
+            match self.runtime.block_on(self.api_client.approve_tool(tool)) {
+                Ok(()) => tracing::info!("Session approval granted for: {}", tool),
+                Err(e) => self.push_ui_error(format!("Failed to approve tool: {}", e)),
+            }
+            self.pending_approvals.retain(|(t, _)| t != tool);
+        }
+        if let Some(ref tool) = dismiss_tool {
+            self.pending_approvals.retain(|(t, _)| t != tool);
         }
 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
