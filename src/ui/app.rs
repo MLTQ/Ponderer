@@ -444,11 +444,7 @@ impl eframe::App for AgentApp {
                 }
                 FrontendEvent::ApprovalRequest { tool_name, reason } => {
                     // Deduplicate: only add if not already pending
-                    if !self
-                        .pending_approvals
-                        .iter()
-                        .any(|(t, _)| t == tool_name)
-                    {
+                    if !self.pending_approvals.iter().any(|(t, _)| t == tool_name) {
                         self.pending_approvals
                             .push((tool_name.clone(), reason.clone()));
                     }
@@ -481,7 +477,9 @@ impl eframe::App for AgentApp {
                             format!("! Approval needed: {}", tool_name),
                         );
                         ui.add_space(2.0);
-                        ui.add(egui::Label::new(egui::RichText::new(reason.as_str()).small()).wrap());
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(reason.as_str()).small()).wrap(),
+                        );
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             if ui
@@ -559,37 +557,30 @@ impl eframe::App for AgentApp {
                 ui.add_space(4.0);
 
                 // Zone 2: Live LLM token stream.
-                egui::CollapsingHeader::new(
-                    egui::RichText::new("💭 Live Stream").small().strong(),
-                )
-                .id_salt("live_stream_header")
-                .default_open(true)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(110.0)
-                        .stick_to_bottom(true)
-                        .id_salt("live_stream_scroll")
-                        .show(ui, |ui| {
-                            if let Some(ref text) = self.live_stream_text {
-                                let preview = last_n_chars(text, 600);
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(preview)
-                                            .small()
-                                            .color(egui::Color32::from_gray(200)),
-                                    )
-                                    .wrap(),
-                                );
-                            } else {
-                                ui.label(
-                                    egui::RichText::new("—")
-                                        .weak()
-                                        .small()
-                                        .italics(),
-                                );
-                            }
-                        });
-                });
+                egui::CollapsingHeader::new(egui::RichText::new("💭 Live Stream").small().strong())
+                    .id_salt("live_stream_header")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(110.0)
+                            .stick_to_bottom(true)
+                            .id_salt("live_stream_scroll")
+                            .show(ui, |ui| {
+                                if let Some(ref text) = self.live_stream_text {
+                                    let preview = last_n_chars(text, 600);
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(preview)
+                                                .small()
+                                                .color(egui::Color32::from_gray(200)),
+                                        )
+                                        .wrap(),
+                                    );
+                                } else {
+                                    ui.label(egui::RichText::new("—").weak().small().italics());
+                                }
+                            });
+                    });
 
                 ui.add_space(4.0);
                 ui.separator();
@@ -622,11 +613,7 @@ impl eframe::App for AgentApp {
                         }
                         if let Some(ref action) = self.last_action {
                             ui.label(egui::RichText::new("|").weak().small());
-                            ui.label(
-                                egui::RichText::new(truncate_str(action, 50))
-                                    .weak()
-                                    .small(),
-                            );
+                            ui.label(egui::RichText::new(truncate_str(action, 50)).weak().small());
                         }
                     });
                 });
@@ -727,8 +714,7 @@ impl eframe::App for AgentApp {
                     .on_hover_text("Delete this conversation")
                     .clicked()
                 {
-                    self.confirm_delete_conversation_id =
-                        Some(self.active_conversation_id.clone());
+                    self.confirm_delete_conversation_id = Some(self.active_conversation_id.clone());
                 }
 
                 if self.active_conversation_id != previous_conversation_id {
@@ -776,22 +762,20 @@ impl eframe::App for AgentApp {
 
             if !active_progress.is_empty() {
                 ui.add_space(6.0);
-                egui::CollapsingHeader::new(
-                    egui::RichText::new("⚡ Live Agent Turn").strong(),
-                )
-                .id_salt("live_agent_turn")
-                .default_open(true)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(170.0)
-                        .stick_to_bottom(true)
-                        .id_salt("live_turn_scroll")
-                        .show(ui, |ui| {
-                            for entry in &active_progress {
-                                render_live_tool_entry(ui, entry);
-                            }
-                        });
-                });
+                egui::CollapsingHeader::new(egui::RichText::new("⚡ Live Agent Turn").strong())
+                    .id_salt("live_agent_turn")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(170.0)
+                            .stick_to_bottom(true)
+                            .id_salt("live_turn_scroll")
+                            .show(ui, |ui| {
+                                for entry in &active_progress {
+                                    render_live_tool_entry(ui, entry);
+                                }
+                            });
+                    });
             }
 
             ui.add_space(6.0);
@@ -840,34 +824,31 @@ impl eframe::App for AgentApp {
                 .default_size([560.0, 420.0])
                 .open(&mut open)
                 .show(ctx, |ui| {
-                    ui.with_layout(
-                        egui::Layout::bottom_up(egui::Align::LEFT),
-                        |ui| {
-                            ui.add_space(4.0);
-                            if ui.button("Close").clicked() {
-                                self.event_detail_popup = None;
-                            }
-                            ui.add_space(4.0);
-                            ui.separator();
-                            // Fill the remaining space (above the Close button) with a
-                            // scrollable, selectable, read-only text editor.  TextEdit
-                            // handles arbitrarily large text without truncation and lets
-                            // the user select/copy the content.
-                            let available = ui.available_size();
-                            let mut buf = text.clone();
-                            egui::ScrollArea::vertical()
-                                .id_salt("event_detail_scroll")
-                                .show(ui, |ui| {
-                                    ui.add_sized(
-                                        available,
-                                        egui::TextEdit::multiline(&mut buf)
-                                            .font(egui::TextStyle::Monospace)
-                                            .interactive(false)
-                                            .desired_width(f32::INFINITY),
-                                    );
-                                });
-                        },
-                    );
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                        ui.add_space(4.0);
+                        if ui.button("Close").clicked() {
+                            self.event_detail_popup = None;
+                        }
+                        ui.add_space(4.0);
+                        ui.separator();
+                        // Fill the remaining space (above the Close button) with a
+                        // scrollable, selectable, read-only text editor.  TextEdit
+                        // handles arbitrarily large text without truncation and lets
+                        // the user select/copy the content.
+                        let available = ui.available_size();
+                        let mut buf = text.clone();
+                        egui::ScrollArea::vertical()
+                            .id_salt("event_detail_scroll")
+                            .show(ui, |ui| {
+                                ui.add_sized(
+                                    available,
+                                    egui::TextEdit::multiline(&mut buf)
+                                        .font(egui::TextStyle::Monospace)
+                                        .interactive(false)
+                                        .desired_width(f32::INFINITY),
+                                );
+                            });
+                    });
                 });
             if !open {
                 self.event_detail_popup = None;
@@ -890,11 +871,7 @@ impl eframe::App for AgentApp {
                 .open(&mut open)
                 .show(ctx, |ui| {
                     ui.label(format!("Delete \"{}\"?", title_label));
-                    ui.label(
-                        egui::RichText::new("This cannot be undone.")
-                            .small()
-                            .weak(),
-                    );
+                    ui.label(egui::RichText::new("This cannot be undone.").small().weak());
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui
@@ -1063,7 +1040,11 @@ fn render_live_tool_entry(ui: &mut egui::Ui, entry: &LiveToolProgress) {
                 .small(),
         );
         if let Some(ref subtask_id) = entry.subtask_id {
-            ui.label(egui::RichText::new(format!("[{}]", subtask_id)).weak().small());
+            ui.label(
+                egui::RichText::new(format!("[{}]", subtask_id))
+                    .weak()
+                    .small(),
+            );
         }
         let output = truncate_str(&entry.output_preview, 200);
         ui.add(

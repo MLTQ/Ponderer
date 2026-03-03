@@ -289,12 +289,7 @@ impl ApiClient {
         .send()
         .await?
         .error_for_status()
-        .with_context(|| {
-            format!(
-                "PATCH /v1/conversations/{} failed",
-                conversation_id
-            )
-        })?
+        .with_context(|| format!("PATCH /v1/conversations/{} failed", conversation_id))?
         .json::<ChatConversation>()
         .await
         .context("Failed to decode updated conversation")

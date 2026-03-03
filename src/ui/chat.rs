@@ -210,9 +210,7 @@ fn event_line(
             }
         });
     } else {
-        ui.add(
-            egui::Label::new(RichText::new(full_text).color(color).small()).wrap(),
-        );
+        ui.add(egui::Label::new(RichText::new(full_text).color(color).small()).wrap());
     }
 }
 
@@ -379,8 +377,7 @@ pub fn render_private_chat(
             .stick_to_bottom(true)
             .max_height(chat_scroll_height)
             .show(ui, |ui| {
-                let has_live_preview =
-                    streaming_preview.map_or(false, |p| !p.trim().is_empty());
+                let has_live_preview = streaming_preview.map_or(false, |p| !p.trim().is_empty());
 
                 if messages.is_empty() && !has_live_preview {
                     ui.centered_and_justified(|ui| {
