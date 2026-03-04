@@ -1,10 +1,9 @@
-use crate::comfy_workflow::{ComfyWorkflow, ControllableInput, InputType};
+use crate::comfy_workflow::{ComfyWorkflow, InputType};
 use crate::config::AgentConfig;
 use eframe::egui;
 use std::path::PathBuf;
 
 pub struct ComfySettingsPanel {
-    pub show: bool,
     pub workflow: Option<ComfyWorkflow>,
     workflow_texture: Option<egui::TextureHandle>,
     import_error: Option<String>,
@@ -14,7 +13,6 @@ pub struct ComfySettingsPanel {
 impl ComfySettingsPanel {
     pub fn new() -> Self {
         Self {
-            show: false,
             workflow: None,
             workflow_texture: None,
             import_error: None,
@@ -22,198 +20,177 @@ impl ComfySettingsPanel {
         }
     }
 
-    pub fn render(&mut self, ctx: &egui::Context, config: &mut AgentConfig) -> bool {
-        if !self.show {
-            return false;
-        }
-
+    pub fn render_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        config: &mut AgentConfig,
+    ) -> bool {
         let mut should_save = false;
         let mut import_png_path: Option<PathBuf> = None;
         let mut import_json_path: Option<PathBuf> = None;
-        let mut should_close = false;
         let mut should_test = false;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // Import section
+            ui.heading("Import Workflow");
+            ui.add_space(8.0);
 
-        let mut is_open = self.show;
-
-        egui::Window::new("🎨 ComfyUI Workflow")
-            .open(&mut is_open)
-            .default_width(700.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    // Import section
-                    ui.heading("Import Workflow");
-                    ui.add_space(8.0);
-
-                    ui.horizontal(|ui| {
-                        if ui.button("📁 Import from PNG").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("PNG Image", &["png"])
-                                .pick_file()
-                            {
-                                import_png_path = Some(path);
-                            }
-                        }
-
-                        if ui.button("📄 Import from JSON").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("JSON File", &["json"])
-                                .pick_file()
-                            {
-                                import_json_path = Some(path);
-                            }
-                        }
-                    });
-
-                    if let Some(ref error) = self.import_error {
-                        ui.colored_label(egui::Color32::RED, format!("Error: {}", error));
+            ui.horizontal(|ui| {
+                if ui.button("📁 Import from PNG").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("PNG Image", &["png"])
+                        .pick_file()
+                    {
+                        import_png_path = Some(path);
                     }
+                }
 
-                    ui.add_space(16.0);
-                    ui.separator();
-
-                    // Workflow preview and settings
-                    if let Some(ref mut workflow) = self.workflow {
-                        ui.heading("Current Workflow");
-                        ui.add_space(8.0);
-
-                        ui.horizontal(|ui| {
-                            // Preview image
-                            if let Some(ref texture) = self.workflow_texture {
-                                ui.image((texture.id(), egui::vec2(128.0, 128.0)));
-                            } else if let Some(ref path) = workflow.preview_image_path {
-                                // Try to load preview
-                                if let Ok(img) = image::open(path) {
-                                    let rgba = img.to_rgba8();
-                                    let size = [rgba.width() as usize, rgba.height() as usize];
-                                    let pixels = rgba.into_raw();
-                                    let color_image =
-                                        egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                                    let texture = ctx.load_texture(
-                                        "workflow_preview",
-                                        color_image,
-                                        Default::default(),
-                                    );
-                                    ui.image((texture.id(), egui::vec2(128.0, 128.0)));
-                                    self.workflow_texture = Some(texture);
-                                }
-                            }
-
-                            ui.vertical(|ui| {
-                                ui.label(format!("Name: {}", workflow.name));
-                                ui.label(format!("Output Node: {}", workflow.output_node_id));
-                                ui.label(format!(
-                                    "Controllable Nodes: {}",
-                                    workflow.controllable_nodes.len()
-                                ));
-                            });
-                        });
-
-                        ui.add_space(16.0);
-
-                        // Controllable inputs
-                        ui.heading("Controllable Inputs");
-                        ui.label("Configure which inputs the agent can modify");
-                        ui.add_space(8.0);
-
-                        for (node_id, node) in &mut workflow.controllable_nodes {
-                            ui.group(|ui| {
-                                ui.label(format!("Node {} ({})", node_id, node.class_type));
-                                ui.add_space(4.0);
-
-                                for input in &mut node.inputs {
-                                    ui.horizontal(|ui| {
-                                        ui.checkbox(&mut input.agent_modifiable, "");
-
-                                        ui.label(&input.name);
-                                        ui.label(format!("({:?})", input.input_type));
-
-                                        // Show current value
-                                        match &input.input_type {
-                                            InputType::Text => {
-                                                if let Some(text) = input.default_value.as_str() {
-                                                    let short = if text.len() > 30 {
-                                                        format!("{}...", &text[..30])
-                                                    } else {
-                                                        text.to_string()
-                                                    };
-                                                    ui.label(format!("\"{}\"", short))
-                                                        .on_hover_text(text);
-                                                }
-                                            }
-                                            InputType::Int | InputType::Seed => {
-                                                if let Some(num) = input.default_value.as_i64() {
-                                                    ui.label(format!("[{}]", num));
-                                                }
-                                            }
-                                            InputType::Float => {
-                                                if let Some(num) = input.default_value.as_f64() {
-                                                    ui.label(format!("[{:.2}]", num));
-                                                }
-                                            }
-                                            InputType::Bool => {
-                                                if let Some(b) = input.default_value.as_bool() {
-                                                    ui.label(format!("[{}]", b));
-                                                }
-                                            }
-                                        }
-
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if input.agent_modifiable {
-                                                    ui.label("✓ Agent can modify")
-                                                        .on_hover_text(&input.description);
-                                                } else {
-                                                    ui.label("🔒 Fixed")
-                                                        .on_hover_text(&input.description);
-                                                }
-                                            },
-                                        );
-                                    });
-                                }
-                            });
-                            ui.add_space(8.0);
-                        }
-
-                        ui.add_space(16.0);
-                        ui.separator();
-                    } else {
-                        ui.label("No workflow loaded");
-                        ui.label("Import a ComfyUI workflow PNG or JSON to get started");
+                if ui.button("📄 Import from JSON").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("JSON File", &["json"])
+                        .pick_file()
+                    {
+                        import_json_path = Some(path);
                     }
-
-                    ui.add_space(8.0);
-
-                    // Test and save buttons
-                    ui.horizontal(|ui| {
-                        if ui.button("🧪 Test Workflow").clicked() {
-                            should_test = true;
-                        }
-
-                        if ui.button("💾 Save").clicked() {
-                            should_save = true;
-                        }
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Cancel").clicked() {
-                                should_close = true;
-                            }
-                        });
-                    });
-
-                    if let Some(ref status) = self.test_status {
-                        ui.add_space(8.0);
-                        if status.starts_with("✅") {
-                            ui.colored_label(egui::Color32::GREEN, status);
-                        } else {
-                            ui.colored_label(egui::Color32::RED, status);
-                        }
-                    }
-                });
+                }
             });
 
-        // Update window state
-        self.show = is_open && !should_close;
+            if let Some(ref error) = self.import_error {
+                ui.colored_label(egui::Color32::RED, format!("Error: {}", error));
+            }
+
+            ui.add_space(16.0);
+            ui.separator();
+
+            // Workflow preview and settings
+            if let Some(ref mut workflow) = self.workflow {
+                ui.heading("Current Workflow");
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    // Preview image
+                    if let Some(ref texture) = self.workflow_texture {
+                        ui.image((texture.id(), egui::vec2(128.0, 128.0)));
+                    } else if let Some(ref path) = workflow.preview_image_path {
+                        // Try to load preview
+                        if let Ok(img) = image::open(path) {
+                            let rgba = img.to_rgba8();
+                            let size = [rgba.width() as usize, rgba.height() as usize];
+                            let pixels = rgba.into_raw();
+                            let color_image =
+                                egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                            let texture = ctx.load_texture(
+                                "workflow_preview",
+                                color_image,
+                                Default::default(),
+                            );
+                            ui.image((texture.id(), egui::vec2(128.0, 128.0)));
+                            self.workflow_texture = Some(texture);
+                        }
+                    }
+
+                    ui.vertical(|ui| {
+                        ui.label(format!("Name: {}", workflow.name));
+                        ui.label(format!("Output Node: {}", workflow.output_node_id));
+                        ui.label(format!(
+                            "Controllable Nodes: {}",
+                            workflow.controllable_nodes.len()
+                        ));
+                    });
+                });
+
+                ui.add_space(16.0);
+
+                // Controllable inputs
+                ui.heading("Controllable Inputs");
+                ui.label("Configure which inputs the agent can modify");
+                ui.add_space(8.0);
+
+                for (node_id, node) in &mut workflow.controllable_nodes {
+                    ui.group(|ui| {
+                        ui.label(format!("Node {} ({})", node_id, node.class_type));
+                        ui.add_space(4.0);
+
+                        for input in &mut node.inputs {
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut input.agent_modifiable, "");
+
+                                ui.label(&input.name);
+                                ui.label(format!("({:?})", input.input_type));
+
+                                match &input.input_type {
+                                    InputType::Text => {
+                                        if let Some(text) = input.default_value.as_str() {
+                                            let short = if text.len() > 30 {
+                                                format!("{}...", &text[..30])
+                                            } else {
+                                                text.to_string()
+                                            };
+                                            ui.label(format!("\"{}\"", short)).on_hover_text(text);
+                                        }
+                                    }
+                                    InputType::Int | InputType::Seed => {
+                                        if let Some(num) = input.default_value.as_i64() {
+                                            ui.label(format!("[{}]", num));
+                                        }
+                                    }
+                                    InputType::Float => {
+                                        if let Some(num) = input.default_value.as_f64() {
+                                            ui.label(format!("[{:.2}]", num));
+                                        }
+                                    }
+                                    InputType::Bool => {
+                                        if let Some(b) = input.default_value.as_bool() {
+                                            ui.label(format!("[{}]", b));
+                                        }
+                                    }
+                                }
+
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if input.agent_modifiable {
+                                            ui.label("✓ Agent can modify")
+                                                .on_hover_text(&input.description);
+                                        } else {
+                                            ui.label("🔒 Fixed").on_hover_text(&input.description);
+                                        }
+                                    },
+                                );
+                            });
+                        }
+                    });
+                    ui.add_space(8.0);
+                }
+
+                ui.add_space(16.0);
+                ui.separator();
+            } else {
+                ui.label("No workflow loaded");
+                ui.label("Import a ComfyUI workflow PNG or JSON to get started");
+            }
+
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                if ui.button("🧪 Test Workflow").clicked() {
+                    should_test = true;
+                }
+
+                if ui.button("💾 Save Workflow").clicked() {
+                    should_save = true;
+                }
+            });
+
+            if let Some(ref status) = self.test_status {
+                ui.add_space(8.0);
+                if status.starts_with("✅") {
+                    ui.colored_label(egui::Color32::GREEN, status);
+                } else {
+                    ui.colored_label(egui::Color32::RED, status);
+                }
+            }
+        });
 
         // Handle import
         if let Some(path) = import_png_path {
@@ -230,7 +207,7 @@ impl ComfySettingsPanel {
 
         // Handle save
         if should_save && self.workflow.is_some() {
-            self.save_workflow_to_config(config);
+            self.sync_workflow_to_config(config);
             return true;
         }
 
@@ -307,7 +284,7 @@ impl ComfySettingsPanel {
         }
     }
 
-    fn save_workflow_to_config(&mut self, config: &mut AgentConfig) {
+    pub fn sync_workflow_to_config(&mut self, config: &mut AgentConfig) {
         if let Some(ref workflow) = self.workflow {
             // Serialize workflow to JSON string
             match serde_json::to_string(workflow) {
@@ -316,7 +293,7 @@ impl ComfySettingsPanel {
                     if let Some(ref path) = workflow.preview_image_path {
                         config.workflow_path = Some(path.clone());
                     }
-                    tracing::info!("Saved workflow settings to config");
+                    tracing::info!("Synced workflow settings to config");
                 }
                 Err(e) => {
                     tracing::error!("Failed to serialize workflow: {}", e);

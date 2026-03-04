@@ -39,7 +39,10 @@ All `/v1/*` routes require auth in required mode (including `/v1/health`).
 
 - `GET /v1/plugins`
   - Response: array of `BackendPluginManifest`
-  - Includes built-in manifest `builtin.core`
+  - Includes built-in manifests such as `builtin.core`, `builtin.comfy`, and `builtin.orbweaver`, plus any filesystem workflow bundles discovered under the plugin directory
+  - `BackendPluginManifest.kind` distinguishes built-ins from workflow bundles
+  - `BackendPluginManifest.settings_tab` is optional and contains `{ "id", "title", "order" }` when the plugin wants a dedicated settings tab in the frontend
+  - `BackendPluginManifest.settings_schema` is optional and, when present, contains declarative form fields the frontend can render without shipping plugin-specific UI code
 
 ### Conversations and messages
 

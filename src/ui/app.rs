@@ -3,7 +3,6 @@ use flume::Receiver;
 
 use super::avatar::AvatarSet;
 use super::character::CharacterPanel;
-use super::comfy_settings::ComfySettingsPanel;
 use super::settings::SettingsPanel;
 use crate::api::{
     AgentVisualState, ApiClient, ChatConversation, ChatMessage, ChatTurnPhase, FrontendEvent,
@@ -22,7 +21,6 @@ pub struct AgentApp {
     runtime: tokio::runtime::Runtime,
     settings_panel: SettingsPanel,
     character_panel: CharacterPanel,
-    comfy_settings_panel: ComfySettingsPanel,
     avatars: Option<AvatarSet>,
     avatars_loaded: bool,
     conversations: Vec<ChatConversation>,
@@ -94,8 +92,19 @@ impl AgentApp {
             }
         };
 
-        let mut comfy_settings_panel = ComfySettingsPanel::new();
-        comfy_settings_panel.load_workflow_from_config(&startup_config);
+        let plugin_manifests = match runtime.block_on(api_client.list_plugins()) {
+            Ok(manifests) => manifests,
+            Err(error) => {
+                tracing::warn!(
+                    "Failed to load plugin manifests from backend ({}); settings tabs will use core defaults only",
+                    error
+                );
+                Vec::new()
+            }
+        };
+
+        let mut settings_panel = SettingsPanel::new(startup_config.clone());
+        settings_panel.set_plugin_manifests(plugin_manifests);
 
         let mut app = Self {
             events: Vec::new(),
@@ -104,9 +113,8 @@ impl AgentApp {
             current_state: AgentVisualState::Idle,
             user_input: String::new(),
             runtime,
-            settings_panel: SettingsPanel::new(startup_config.clone()),
+            settings_panel,
             character_panel: CharacterPanel::new(startup_config),
-            comfy_settings_panel,
             avatars: None,
             avatars_loaded: false,
             conversations: Vec::new(),
@@ -135,6 +143,17 @@ impl AgentApp {
 
     fn push_ui_error(&mut self, message: impl Into<String>) {
         self.events.push(FrontendEvent::Error(message.into()));
+    }
+
+    fn voice_orb_auto_play_enabled(&self) -> bool {
+        self.settings_panel
+            .config
+            .plugin_settings
+            .get("voice-orb")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|settings| settings.get("auto_play_generated_audio"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
     }
 
     fn refresh_status(&mut self) {
@@ -302,9 +321,8 @@ impl AgentApp {
             .block_on(self.api_client.update_config(&config))
         {
             Ok(saved) => {
-                self.settings_panel.config = saved.clone();
+                self.settings_panel.sync_from_config(saved.clone());
                 self.character_panel.config = saved.clone();
-                self.comfy_settings_panel.load_workflow_from_config(&saved);
                 self.avatars = None;
                 self.avatars_loaded = false;
                 tracing::info!("Config saved through backend API");
@@ -657,15 +675,19 @@ impl eframe::App for AgentApp {
                     }
 
                     if ui.button("⚙ Settings").clicked() {
-                        self.settings_panel.show = true;
+                        self.settings_panel.open();
                     }
 
                     if ui.button("🎭 Character").clicked() {
                         self.character_panel.show = true;
                     }
 
-                    if ui.button("🎨 Workflow").clicked() {
-                        self.comfy_settings_panel.show = true;
+                    if ui.button("🕸 OrbWeaver").clicked() {
+                        self.settings_panel.open_tab("skill.orbweaver");
+                    }
+
+                    if ui.button("🎨 ComfyUI").clicked() {
+                        self.settings_panel.open_tab("skill.comfy");
                     }
 
                     let activity_btn_text = if self.show_activity_panel {
@@ -729,6 +751,7 @@ impl eframe::App for AgentApp {
                 .as_ref()
                 .filter(|preview| preview.conversation_id == self.active_conversation_id)
                 .map(|preview| preview.content.clone());
+            let auto_play_generated_audio = self.voice_orb_auto_play_enabled();
             let active_progress: Vec<LiveToolProgress> = self
                 .live_tool_progress
                 .iter()
@@ -753,6 +776,7 @@ impl eframe::App for AgentApp {
                         &self.chat_history,
                         active_streaming_preview.as_deref(),
                         &mut self.chat_media_cache,
+                        auto_play_generated_audio,
                     );
                 },
             );
@@ -993,14 +1017,6 @@ impl eframe::App for AgentApp {
 
         if let Some(new_config) = self.character_panel.render(ctx) {
             self.persist_config(new_config);
-        }
-
-        if self
-            .comfy_settings_panel
-            .render(ctx, &mut self.settings_panel.config)
-        {
-            let updated = self.settings_panel.config.clone();
-            self.persist_config(updated);
         }
 
         if let Some(ref tool) = approve_tool {

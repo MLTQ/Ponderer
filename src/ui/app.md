@@ -6,12 +6,12 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 ## Components
 
 ### `AgentApp`
-- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character/workflow panels, `pending_approvals` for approval popups, and mind-state fields: `last_orientation`, `last_action`, `last_journal`, `live_stream_text` (live LLM token stream, any conversation).
+- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character panels, `pending_approvals` for approval popups, and mind-state fields: `last_orientation`, `last_action`, `last_journal`, `live_stream_text` (live LLM token stream, any conversation).
 - **Interacts with**: `crate::api::{ApiClient, FrontendEvent, ChatConversation, ChatMessage, AgentVisualState, OrientationSummary}`, UI subpanels.
 
 ### `AgentApp::new(api_client, fallback_config)`
-- **Does**: Creates a tokio runtime, starts WS event streaming, fetches config from backend (fallback on failure), initializes panels, then loads status/conversations/history.
-- **Interacts with**: `ApiClient::stream_events_forever`, `ApiClient::get_config`.
+- **Does**: Creates a tokio runtime, starts WS event streaming, fetches config plus plugin manifests from the backend (fallback on config failure), initializes panels, then loads status/conversations/history.
+- **Interacts with**: `ApiClient::stream_events_forever`, `ApiClient::get_config`, `ApiClient::list_plugins`.
 
 ### REST refresh helpers (`refresh_status`, `refresh_conversations`, `refresh_chat_history`)
 - **Does**: Pulls current backend state into UI every refresh interval.
@@ -26,11 +26,11 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - **Interacts with**: `/v1/turns/:id/prompt`, `chat::render_private_chat` prompt-button return value.
 
 ### `persist_config(config)`
-- **Does**: Saves settings/character/workflow config via backend API, syncs local panel state from backend response, and forces avatar reload so mood-avatar changes apply immediately.
+- **Does**: Saves settings/character config via backend API, syncs local panel state from backend response (including tabbed skill settings state), and forces avatar reload so mood-avatar changes apply immediately.
 - **Interacts with**: `/v1/config`.
 
 ### `impl eframe::App for AgentApp` -- `update()`
-- **Does**: Main render loop. Processes WS events, updates status/chat on timer, renders chat + activity panels, and dispatches API actions for pause/stop/config/message operations.
+- **Does**: Main render loop. Processes WS events, updates status/chat on timer, renders chat + activity panels, and dispatches API actions for pause/stop/config/message operations. Passes the Voice-Orb auto-play setting into chat rendering so audio playback behavior follows plugin settings.
 - **Interacts with**: `chat::render_private_chat`, `chat::render_event_log`, `sprite::render_agent_sprite`.
 
 ## Contracts
@@ -53,6 +53,10 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 ### `truncate_str` / `last_n_chars`
 - **Does**: Local helpers for display truncation. `truncate_str` adds `…` at max_chars; `last_n_chars` returns the trailing N chars of a string.
 
+### `voice_orb_auto_play_enabled()`
+- **Does**: Reads `plugin_settings["voice-orb"]["auto_play_generated_audio"]` from the currently loaded config and returns a boolean toggle consumed by chat media rendering.
+- **Interacts with**: settings panel config state and `chat::render_private_chat`.
+
 ## Notes
 - The app is no longer wired to in-process `Agent`/`AgentDatabase`/`flume` backend channels.
 - WS event stream runs continuously with reconnect; polling refresh every 2s is retained for list/history/status consistency.
@@ -61,3 +65,4 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - UI-level API failures are surfaced in the activity log as `FrontendEvent::Error` entries.
 - Prompt inspector windows are opened on demand from agent message rows and support toggling system-prompt visibility plus translucent source highlights over prompt sections.
 - `FrontendEvent::ApprovalRequest` is NOT pushed to the activity log; it is deduplicated and stored in `pending_approvals`. Each pending approval renders as an `egui::Window` popup (centered, non-collapsible) with "✅ Allow this session" and "✖ Dismiss" buttons. Approval calls `ApiClient::approve_tool`; dismiss just removes the entry from `pending_approvals`.
+- The old standalone workflow modal is now folded into the main settings window as the `ComfyUI` skill tab; the toolbar exposes direct `OrbWeaver` and `ComfyUI` shortcuts that open those tabs.
