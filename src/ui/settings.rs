@@ -1,15 +1,48 @@
 use super::comfy_settings::ComfySettingsPanel;
 use super::orbweaver_settings::OrbWeaverSettingsPanel;
 use super::plugin_settings_form::PluginSettingsForm;
-use crate::api::{BackendPluginManifest, PluginSettingsSchemaManifest, PluginSettingsTabManifest};
+use crate::api::{
+    BackendPluginManifest, PluginSettingsSchemaManifest, PluginSettingsTabManifest, ScheduledJob,
+};
 use crate::config::AgentConfig;
 use eframe::egui;
+use std::collections::HashMap;
 
 const CORE_TAB_GENERAL: &str = "core.general";
 const CORE_TAB_BEHAVIOR: &str = "core.behavior";
 const CORE_TAB_LOOPS: &str = "core.loops";
 const CORE_TAB_MEMORY: &str = "core.memory";
 const CORE_TAB_SYSTEM: &str = "core.system";
+const CORE_TAB_SCHEDULES: &str = "core.schedules";
+
+#[derive(Debug, Clone)]
+pub enum ScheduledJobAction {
+    Refresh,
+    Create {
+        name: String,
+        prompt: String,
+        interval_minutes: u64,
+        enabled: bool,
+    },
+    Update {
+        job_id: String,
+        name: String,
+        prompt: String,
+        interval_minutes: u64,
+        enabled: bool,
+    },
+    Delete {
+        job_id: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct ScheduledJobEditor {
+    name: String,
+    prompt: String,
+    interval_minutes: u64,
+    enabled: bool,
+}
 
 pub struct SettingsPanel {
     pub config: AgentConfig,
@@ -18,6 +51,14 @@ pub struct SettingsPanel {
     plugin_manifests: Vec<BackendPluginManifest>,
     comfy_panel: ComfySettingsPanel,
     orbweaver_panel: OrbWeaverSettingsPanel,
+    scheduled_jobs: Vec<ScheduledJob>,
+    scheduled_job_editors: HashMap<String, ScheduledJobEditor>,
+    scheduled_job_actions: Vec<ScheduledJobAction>,
+    scheduled_jobs_error: Option<String>,
+    new_job_name: String,
+    new_job_prompt: String,
+    new_job_interval_minutes: u64,
+    new_job_enabled: bool,
 }
 
 impl SettingsPanel {
@@ -32,6 +73,14 @@ impl SettingsPanel {
             plugin_manifests: Vec::new(),
             comfy_panel,
             orbweaver_panel: OrbWeaverSettingsPanel::new(),
+            scheduled_jobs: Vec::new(),
+            scheduled_job_editors: HashMap::new(),
+            scheduled_job_actions: Vec::new(),
+            scheduled_jobs_error: None,
+            new_job_name: String::new(),
+            new_job_prompt: String::new(),
+            new_job_interval_minutes: 60,
+            new_job_enabled: true,
         }
     }
 
@@ -43,6 +92,19 @@ impl SettingsPanel {
     pub fn sync_from_config(&mut self, config: AgentConfig) {
         self.config = config.clone();
         self.comfy_panel.load_workflow_from_config(&config);
+    }
+
+    pub fn set_scheduled_jobs(&mut self, scheduled_jobs: Vec<ScheduledJob>) {
+        self.scheduled_jobs = scheduled_jobs;
+        self.scheduled_job_editors.clear();
+    }
+
+    pub fn set_scheduled_jobs_error(&mut self, error: Option<String>) {
+        self.scheduled_jobs_error = error;
+    }
+
+    pub fn take_scheduled_job_actions(&mut self) -> Vec<ScheduledJobAction> {
+        std::mem::take(&mut self.scheduled_job_actions)
     }
 
     pub fn open(&mut self) {
@@ -87,6 +149,7 @@ impl SettingsPanel {
                         CORE_TAB_LOOPS => self.render_loops_tab(ui),
                         CORE_TAB_MEMORY => self.render_memory_tab(ui),
                         CORE_TAB_SYSTEM => self.render_system_tab(ui),
+                        CORE_TAB_SCHEDULES => self.render_schedules_tab(ui),
                         "skill.orbweaver" => {
                             let (orbweaver_panel, config) =
                                 (&mut self.orbweaver_panel, &mut self.config);
@@ -141,6 +204,7 @@ impl SettingsPanel {
                 (CORE_TAB_LOOPS, "Living Loop"),
                 (CORE_TAB_MEMORY, "Memory"),
                 (CORE_TAB_SYSTEM, "System"),
+                (CORE_TAB_SCHEDULES, "Schedules"),
             ] {
                 let selected = self.selected_tab == tab_id;
                 if ui.selectable_label(selected, label).clicked() {
@@ -542,6 +606,210 @@ impl SettingsPanel {
         ui.text_edit_multiline(&mut self.config.system_prompt);
     }
 
+    fn render_schedules_tab(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Scheduled Tasks");
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(
+                "Recurring schedules queue private operator messages on an interval (1-10080 minutes).",
+            )
+            .small()
+            .weak(),
+        );
+        ui.add_space(6.0);
+
+        if let Some(error) = self.scheduled_jobs_error.as_deref() {
+            ui.colored_label(egui::Color32::from_rgb(230, 120, 120), error);
+            ui.add_space(6.0);
+        }
+
+        ui.horizontal(|ui| {
+            if ui.button("Refresh Jobs").clicked() {
+                self.scheduled_job_actions.push(ScheduledJobAction::Refresh);
+            }
+            ui.label(
+                egui::RichText::new(format!("{} configured", self.scheduled_jobs.len()))
+                    .small()
+                    .weak(),
+            );
+        });
+        ui.add_space(8.0);
+
+        if self.scheduled_jobs.is_empty() {
+            ui.label(
+                egui::RichText::new("No schedules yet. Add one below.")
+                    .small()
+                    .italics()
+                    .weak(),
+            );
+            ui.add_space(6.0);
+        }
+
+        for job in self.scheduled_jobs.clone() {
+            let mut should_save = false;
+            let mut should_revert = false;
+            let mut should_delete = false;
+            let mut save_payload: Option<(String, String, u64, bool)> = None;
+            {
+                let editor = self.editor_for_job(&job);
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(&job.id[..job.id.len().min(12)])
+                                .weak()
+                                .small(),
+                        );
+                        ui.checkbox(&mut editor.enabled, "Enabled");
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Next: {}",
+                                job.next_run_at.format("%Y-%m-%d %H:%M:%S UTC")
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                    });
+                    if let Some(last_run_at) = job.last_run_at {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Last run: {}",
+                                last_run_at.format("%Y-%m-%d %H:%M:%S UTC")
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                    }
+
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut editor.name);
+                        ui.label("Interval (minutes):");
+                        ui.add(egui::DragValue::new(&mut editor.interval_minutes).range(1..=10080));
+                    });
+
+                    ui.label("Prompt:");
+                    ui.add(
+                        egui::TextEdit::multiline(&mut editor.prompt)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY),
+                    );
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Save Changes").clicked() {
+                            should_save = true;
+                        }
+                        if ui.button("Revert").clicked() {
+                            should_revert = true;
+                        }
+                        if ui
+                            .button(egui::RichText::new("Delete").color(egui::Color32::LIGHT_RED))
+                            .clicked()
+                        {
+                            should_delete = true;
+                        }
+                    });
+                });
+                if should_save {
+                    save_payload = Some((
+                        editor.name.trim().to_string(),
+                        editor.prompt.trim().to_string(),
+                        editor.interval_minutes.clamp(1, 10080),
+                        editor.enabled,
+                    ));
+                }
+            }
+            ui.add_space(6.0);
+
+            if should_revert {
+                self.reset_editor_for_job(&job);
+            }
+
+            if let Some((name, prompt, interval_minutes, enabled)) = save_payload {
+                if name.is_empty() || prompt.is_empty() {
+                    self.scheduled_jobs_error =
+                        Some("Name and prompt are required to save a schedule.".to_string());
+                } else {
+                    self.scheduled_jobs_error = None;
+                    self.scheduled_job_actions.push(ScheduledJobAction::Update {
+                        job_id: job.id.clone(),
+                        name,
+                        prompt,
+                        interval_minutes,
+                        enabled,
+                    });
+                }
+            }
+
+            if should_delete {
+                self.scheduled_job_actions.push(ScheduledJobAction::Delete {
+                    job_id: job.id.clone(),
+                });
+            }
+        }
+
+        ui.separator();
+        ui.add_space(8.0);
+        ui.heading("Add Schedule");
+        ui.add_space(6.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Name:");
+            ui.text_edit_singleline(&mut self.new_job_name);
+            ui.label("Interval (minutes):");
+            ui.add(egui::DragValue::new(&mut self.new_job_interval_minutes).range(1..=10080));
+            ui.checkbox(&mut self.new_job_enabled, "Enabled");
+        });
+        ui.label("Prompt:");
+        ui.add(
+            egui::TextEdit::multiline(&mut self.new_job_prompt)
+                .desired_rows(4)
+                .desired_width(f32::INFINITY),
+        );
+        if ui.button("Add Schedule").clicked() {
+            let name = self.new_job_name.trim().to_string();
+            let prompt = self.new_job_prompt.trim().to_string();
+            if name.is_empty() || prompt.is_empty() {
+                self.scheduled_jobs_error =
+                    Some("Name and prompt are required to create a schedule.".to_string());
+            } else {
+                self.scheduled_jobs_error = None;
+                self.scheduled_job_actions.push(ScheduledJobAction::Create {
+                    name,
+                    prompt,
+                    interval_minutes: self.new_job_interval_minutes.clamp(1, 10080),
+                    enabled: self.new_job_enabled,
+                });
+                self.new_job_name.clear();
+                self.new_job_prompt.clear();
+                self.new_job_interval_minutes = 60;
+                self.new_job_enabled = true;
+            }
+        }
+    }
+
+    fn editor_for_job(&mut self, job: &ScheduledJob) -> &mut ScheduledJobEditor {
+        self.scheduled_job_editors
+            .entry(job.id.clone())
+            .or_insert_with(|| ScheduledJobEditor {
+                name: job.name.clone(),
+                prompt: job.prompt.clone(),
+                interval_minutes: job.interval_minutes,
+                enabled: job.enabled,
+            })
+    }
+
+    fn reset_editor_for_job(&mut self, job: &ScheduledJob) {
+        self.scheduled_job_editors.insert(
+            job.id.clone(),
+            ScheduledJobEditor {
+                name: job.name.clone(),
+                prompt: job.prompt.clone(),
+                interval_minutes: job.interval_minutes,
+                enabled: job.enabled,
+            },
+        );
+    }
+
     fn render_comfy_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading("ComfyUI Integration");
         ui.add_space(8.0);
@@ -628,6 +896,7 @@ impl SettingsPanel {
             CORE_TAB_LOOPS.to_string(),
             CORE_TAB_MEMORY.to_string(),
             CORE_TAB_SYSTEM.to_string(),
+            CORE_TAB_SCHEDULES.to_string(),
         ];
         ids.extend(self.skill_tabs().into_iter().map(|tab| tab.id));
         ids

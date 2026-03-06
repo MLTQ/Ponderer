@@ -17,6 +17,10 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - **Does**: Pulls current backend state into UI every refresh interval.
 - **Interacts with**: `/v1/agent/status`, `/v1/conversations`, `/v1/conversations/:id/messages`.
 
+### Scheduled-job helpers (`refresh_scheduled_jobs`, `apply_scheduled_job_actions`)
+- **Does**: Loads current schedules and executes settings-tab schedule CRUD actions through backend APIs.
+- **Interacts with**: `/v1/scheduled-jobs` routes, `ui/settings.rs` `ScheduledJobAction` queue.
+
 ### Chat actions (`send_chat_message`, `create_new_conversation`)
 - **Does**: Sends operator messages and creates new conversations via backend API.
 - **Interacts with**: `/v1/conversations/:id/messages`, `/v1/conversations`.

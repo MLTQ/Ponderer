@@ -59,6 +59,32 @@ pub struct ChatTurnPrompt {
     pub system_prompt_text: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduledJob {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+    pub interval_minutes: u64,
+    pub conversation_id: String,
+    pub enabled: bool,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateScheduledJobRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_minutes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentVisualState {
@@ -442,6 +468,77 @@ impl ApiClient {
             prompt_text: response.prompt_text,
             system_prompt_text: response.system_prompt_text,
         })
+    }
+
+    pub async fn list_scheduled_jobs(&self, limit: usize) -> Result<Vec<ScheduledJob>> {
+        self.request(reqwest::Method::GET, "/v1/scheduled-jobs")
+            .query(&[("limit", limit)])
+            .send()
+            .await?
+            .error_for_status()
+            .context("GET /v1/scheduled-jobs failed")?
+            .json::<Vec<ScheduledJob>>()
+            .await
+            .context("Failed to decode scheduled jobs")
+    }
+
+    pub async fn create_scheduled_job(
+        &self,
+        name: &str,
+        prompt: &str,
+        interval_minutes: u64,
+    ) -> Result<ScheduledJob> {
+        #[derive(Serialize)]
+        struct CreateScheduledJobRequest<'a> {
+            name: &'a str,
+            prompt: &'a str,
+            interval_minutes: u64,
+        }
+
+        self.request(reqwest::Method::POST, "/v1/scheduled-jobs")
+            .json(&CreateScheduledJobRequest {
+                name,
+                prompt,
+                interval_minutes,
+            })
+            .send()
+            .await?
+            .error_for_status()
+            .context("POST /v1/scheduled-jobs failed")?
+            .json::<ScheduledJob>()
+            .await
+            .context("Failed to decode created scheduled job")
+    }
+
+    pub async fn update_scheduled_job(
+        &self,
+        job_id: &str,
+        request: &UpdateScheduledJobRequest,
+    ) -> Result<ScheduledJob> {
+        self.request(
+            reqwest::Method::PUT,
+            &format!("/v1/scheduled-jobs/{}", job_id),
+        )
+        .json(request)
+        .send()
+        .await?
+        .error_for_status()
+        .with_context(|| format!("PUT /v1/scheduled-jobs/{} failed", job_id))?
+        .json::<ScheduledJob>()
+        .await
+        .context("Failed to decode updated scheduled job")
+    }
+
+    pub async fn delete_scheduled_job(&self, job_id: &str) -> Result<()> {
+        self.request(
+            reqwest::Method::DELETE,
+            &format!("/v1/scheduled-jobs/{}", job_id),
+        )
+        .send()
+        .await?
+        .error_for_status()
+        .with_context(|| format!("DELETE /v1/scheduled-jobs/{} failed", job_id))?;
+        Ok(())
     }
 
     pub async fn get_agent_status(&self) -> Result<AgentRuntimeStatus> {

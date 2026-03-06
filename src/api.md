@@ -18,6 +18,10 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - **Does**: Carries prompt-inspection payload for one turn (`prompt_text` plus optional `system_prompt_text`).
 - **Interacts with**: `ui/app.rs` prompt inspector window.
 
+### Scheduled-job DTOs (`ScheduledJob`, `UpdateScheduledJobRequest`)
+- **Does**: Frontend-side models for recurring schedule CRUD payloads.
+- **Interacts with**: `ui/settings.rs` schedules tab and `ui/app.rs` schedule action dispatcher.
+
 ### Runtime DTOs (`AgentVisualState`, `AgentRuntimeStatus`)
 - **Does**: Frontend-side models for status badges/sprite selection and pause/stop controls.
 - **Interacts with**: `ui/sprite.rs`, `ui/avatar.rs`, `ui/app.rs` header status.
@@ -38,6 +42,10 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 ### `ApiClient::list_plugins`
 - **Does**: `GET /v1/plugins` — fetches backend plugin manifests so the UI can expose per-plugin settings tabs.
 - **Interacts with**: `ponderer_backend/src/server.rs` plugin list route.
+
+### Scheduled-job API methods (`list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `delete_scheduled_job`)
+- **Does**: Wrap `/v1/scheduled-jobs` CRUD routes.
+- **Interacts with**: `ponderer_backend/src/server.rs` scheduled-job handlers.
 
 ### Event mapping (`stream_events_forever`, `stream_events_once`, `map_event`)
 - **Does**: Reads WS JSON envelopes, maps backend event types to `FrontendEvent`, and reconnects on disconnect/failure.

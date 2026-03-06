@@ -3,10 +3,10 @@ use flume::Receiver;
 
 use super::avatar::AvatarSet;
 use super::character::CharacterPanel;
-use super::settings::SettingsPanel;
+use super::settings::{ScheduledJobAction, SettingsPanel};
 use crate::api::{
     AgentVisualState, ApiClient, ChatConversation, ChatMessage, ChatTurnPhase, FrontendEvent,
-    OrientationSummary, DEFAULT_CHAT_CONVERSATION_ID,
+    OrientationSummary, UpdateScheduledJobRequest, DEFAULT_CHAT_CONVERSATION_ID,
 };
 use crate::config::AgentConfig;
 
@@ -138,6 +138,7 @@ impl AgentApp {
         app.refresh_status();
         app.refresh_conversations();
         app.refresh_chat_history();
+        app.refresh_scheduled_jobs();
         app
     }
 
@@ -210,6 +211,134 @@ impl AgentApp {
                 );
                 self.push_ui_error(format!("Failed to load chat history: {}", error));
             }
+        }
+    }
+
+    fn refresh_scheduled_jobs(&mut self) {
+        match self
+            .runtime
+            .block_on(self.api_client.list_scheduled_jobs(200))
+        {
+            Ok(jobs) => {
+                self.settings_panel.set_scheduled_jobs(jobs);
+                self.settings_panel.set_scheduled_jobs_error(None);
+            }
+            Err(error) => {
+                tracing::warn!("Failed to refresh scheduled jobs: {}", error);
+                self.settings_panel
+                    .set_scheduled_jobs_error(Some(format!("Failed to load schedules: {}", error)));
+            }
+        }
+    }
+
+    fn apply_scheduled_job_actions(&mut self, actions: Vec<ScheduledJobAction>) {
+        let mut should_refresh = false;
+
+        for action in actions {
+            match action {
+                ScheduledJobAction::Refresh => {
+                    should_refresh = true;
+                }
+                ScheduledJobAction::Create {
+                    name,
+                    prompt,
+                    interval_minutes,
+                    enabled,
+                } => match self.runtime.block_on(self.api_client.create_scheduled_job(
+                    &name,
+                    &prompt,
+                    interval_minutes,
+                )) {
+                    Ok(job) => {
+                        if !enabled {
+                            let request = UpdateScheduledJobRequest {
+                                enabled: Some(false),
+                                ..Default::default()
+                            };
+                            if let Err(error) = self
+                                .runtime
+                                .block_on(self.api_client.update_scheduled_job(&job.id, &request))
+                            {
+                                self.settings_panel.set_scheduled_jobs_error(Some(format!(
+                                    "Created schedule '{}' but failed to disable it: {}",
+                                    name, error
+                                )));
+                                self.push_ui_error(format!(
+                                    "Created schedule '{}' but failed to disable it: {}",
+                                    name, error
+                                ));
+                            }
+                        }
+                        should_refresh = true;
+                    }
+                    Err(error) => {
+                        self.settings_panel.set_scheduled_jobs_error(Some(format!(
+                            "Failed to create schedule '{}': {}",
+                            name, error
+                        )));
+                        self.push_ui_error(format!(
+                            "Failed to create schedule '{}': {}",
+                            name, error
+                        ));
+                    }
+                },
+                ScheduledJobAction::Update {
+                    job_id,
+                    name,
+                    prompt,
+                    interval_minutes,
+                    enabled,
+                } => {
+                    let request = UpdateScheduledJobRequest {
+                        name: Some(name.clone()),
+                        prompt: Some(prompt),
+                        interval_minutes: Some(interval_minutes),
+                        enabled: Some(enabled),
+                    };
+                    match self
+                        .runtime
+                        .block_on(self.api_client.update_scheduled_job(&job_id, &request))
+                    {
+                        Ok(_) => {
+                            should_refresh = true;
+                        }
+                        Err(error) => {
+                            self.settings_panel.set_scheduled_jobs_error(Some(format!(
+                                "Failed to update schedule '{}': {}",
+                                name, error
+                            )));
+                            self.push_ui_error(format!(
+                                "Failed to update schedule '{}': {}",
+                                name, error
+                            ));
+                        }
+                    }
+                }
+                ScheduledJobAction::Delete { job_id } => {
+                    match self
+                        .runtime
+                        .block_on(self.api_client.delete_scheduled_job(&job_id))
+                    {
+                        Ok(()) => {
+                            should_refresh = true;
+                        }
+                        Err(error) => {
+                            self.settings_panel.set_scheduled_jobs_error(Some(format!(
+                                "Failed to delete schedule '{}': {}",
+                                job_id, error
+                            )));
+                            self.push_ui_error(format!(
+                                "Failed to delete schedule '{}': {}",
+                                job_id, error
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        if should_refresh {
+            self.refresh_scheduled_jobs();
         }
     }
 
@@ -676,6 +805,7 @@ impl eframe::App for AgentApp {
 
                     if ui.button("⚙ Settings").clicked() {
                         self.settings_panel.open();
+                        self.refresh_scheduled_jobs();
                     }
 
                     if ui.button("🎭 Character").clicked() {
@@ -1013,6 +1143,10 @@ impl eframe::App for AgentApp {
 
         if let Some(new_config) = self.settings_panel.render(ctx) {
             self.persist_config(new_config);
+        }
+        let scheduled_job_actions = self.settings_panel.take_scheduled_job_actions();
+        if !scheduled_job_actions.is_empty() {
+            self.apply_scheduled_job_actions(scheduled_job_actions);
         }
 
         if let Some(new_config) = self.character_panel.render(ctx) {
