@@ -110,6 +110,12 @@ pub struct AgentRuntimeStatus {
     pub visual_state: AgentVisualState,
     pub actions_this_hour: u32,
     pub last_action_time: Option<DateTime<Utc>>,
+    /// When the current visual state was entered.
+    #[serde(default)]
+    pub visual_state_since: Option<DateTime<Utc>>,
+    /// Short description of what the agent is doing right now.
+    #[serde(default)]
+    pub current_activity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

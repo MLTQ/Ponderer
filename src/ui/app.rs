@@ -42,8 +42,14 @@ pub struct AgentApp {
     last_journal: Option<String>,
     /// Latest live LLM token stream content (any conversation, any cycle).
     live_stream_text: Option<String>,
+    /// Timestamp when the current visual state was entered (from AgentRuntimeStatus).
+    visual_state_since: Option<chrono::DateTime<chrono::Utc>>,
+    /// Short description of what the agent is currently doing (from AgentRuntimeStatus).
+    current_activity: Option<String>,
     /// Conversation pending delete confirmation (id).
     confirm_delete_conversation_id: Option<String>,
+    /// Conversation pending rename: (id, draft_title).
+    rename_conversation: Option<(String, String)>,
     /// Full text to show in the Mind event detail pop-out window.
     event_detail_popup: Option<String>,
 }
@@ -131,7 +137,10 @@ impl AgentApp {
             last_action: None,
             last_journal: None,
             live_stream_text: None,
+            visual_state_since: None,
+            current_activity: None,
             confirm_delete_conversation_id: None,
+            rename_conversation: None,
             event_detail_popup: None,
         };
 
@@ -161,6 +170,8 @@ impl AgentApp {
         match self.runtime.block_on(self.api_client.get_agent_status()) {
             Ok(status) => {
                 self.current_state = status.visual_state;
+                self.visual_state_since = status.visual_state_since;
+                self.current_activity = status.current_activity;
             }
             Err(error) => {
                 tracing::warn!("Failed to refresh backend status: {}", error);
@@ -444,6 +455,21 @@ impl AgentApp {
         }
     }
 
+    fn rename_conversation(&mut self, conversation_id: &str, title: &str) {
+        match self
+            .runtime
+            .block_on(self.api_client.update_conversation_title(conversation_id, title))
+        {
+            Ok(_) => {
+                self.refresh_conversations();
+            }
+            Err(error) => {
+                tracing::error!("Failed to rename conversation: {}", error);
+                self.push_ui_error(format!("Failed to rename conversation: {}", error));
+            }
+        }
+    }
+
     fn persist_config(&mut self, config: AgentConfig) {
         match self
             .runtime
@@ -548,8 +574,17 @@ impl eframe::App for AgentApp {
                     // Capture global live stream regardless of which conversation is active.
                     if *done {
                         self.live_stream_text = None;
+                        // Revert Writing back to Thinking so the backend StateChanged that
+                        // follows can take over normally.
+                        if matches!(self.current_state, AgentVisualState::Writing) {
+                            self.current_state = AgentVisualState::Thinking;
+                        }
                     } else if !content.trim().is_empty() {
                         self.live_stream_text = Some(content.clone());
+                        // Show Writing while tokens are actively streaming to the user.
+                        if matches!(self.current_state, AgentVisualState::Thinking) {
+                            self.current_state = AgentVisualState::Writing;
+                        }
                     }
                     // Per-conversation streaming preview for the chat pane.
                     if *done && content.trim().is_empty() {
@@ -688,9 +723,19 @@ impl eframe::App for AgentApp {
                                 .italics(),
                         );
                     }
+                    // Show current activity while working (e.g. "Requesting LLM...").
+                    // This makes it visible what the agent is waiting on when the GPU is idle.
+                    if let Some(ref activity) = self.current_activity.clone() {
+                        ui.label(
+                            egui::RichText::new(format!("⏳ {}", truncate_str(activity, 90)))
+                                .small()
+                                .color(egui::Color32::LIGHT_BLUE),
+                        );
+                    }
                     if self.last_orientation.is_none()
                         && self.last_action.is_none()
                         && self.last_journal.is_none()
+                        && self.current_activity.is_none()
                     {
                         ui.label(
                             egui::RichText::new("Waiting for agent state...")
@@ -750,6 +795,25 @@ impl eframe::App for AgentApp {
                                 .small()
                                 .strong(),
                         );
+                        // Show how long the agent has been in the current state.
+                        // This makes "stuck Thinking" immediately visible.
+                        if let Some(since) = self.visual_state_since {
+                            let elapsed = chrono::Utc::now()
+                                .signed_duration_since(since)
+                                .num_seconds()
+                                .max(0) as u64;
+                            if elapsed >= 3 {
+                                ui.label(
+                                    egui::RichText::new(format!("({})", format_elapsed(elapsed)))
+                                        .color(if elapsed > 30 {
+                                            egui::Color32::YELLOW
+                                        } else {
+                                            egui::Color32::GRAY
+                                        })
+                                        .small(),
+                                );
+                            }
+                        }
                         if let Some(ref o) = self.last_orientation {
                             ui.label(egui::RichText::new("|").weak().small());
                             ui.label(
@@ -812,14 +876,6 @@ impl eframe::App for AgentApp {
                         self.character_panel.show = true;
                     }
 
-                    if ui.button("🕸 OrbWeaver").clicked() {
-                        self.settings_panel.open_tab("skill.orbweaver");
-                    }
-
-                    if ui.button("🎨 ComfyUI").clicked() {
-                        self.settings_panel.open_tab("skill.comfy");
-                    }
-
                     let activity_btn_text = if self.show_activity_panel {
                         "📋 Hide Activity"
                     } else {
@@ -857,6 +913,21 @@ impl eframe::App for AgentApp {
 
                 if ui.button("New Chat").clicked() {
                     self.create_new_conversation();
+                }
+
+                if ui
+                    .button("Rename")
+                    .on_hover_text("Rename this conversation")
+                    .clicked()
+                {
+                    let current_title = self
+                        .conversations
+                        .iter()
+                        .find(|c| c.id == self.active_conversation_id)
+                        .map(|c| c.title.clone())
+                        .unwrap_or_default();
+                    self.rename_conversation =
+                        Some((self.active_conversation_id.clone(), current_title));
                 }
 
                 if ui
@@ -1006,6 +1077,49 @@ impl eframe::App for AgentApp {
                 });
             if !open {
                 self.event_detail_popup = None;
+            }
+        }
+
+        // Rename-conversation dialog.
+        if self.rename_conversation.is_some() {
+            let mut open = true;
+            let mut confirmed = false;
+            let mut cancelled = false;
+            egui::Window::new("Rename Conversation")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    if let Some((_, ref mut draft)) = self.rename_conversation {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(draft)
+                                .desired_width(280.0)
+                                .hint_text("Conversation title"),
+                        );
+                        response.request_focus();
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Rename").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                confirmed = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                cancelled = true;
+                            }
+                        });
+                    }
+                });
+            if confirmed {
+                if let Some((id, draft)) = self.rename_conversation.take() {
+                    let title = draft.trim().to_string();
+                    if !title.is_empty() {
+                        self.rename_conversation(&id, &title);
+                    }
+                }
+            } else if cancelled || !open {
+                self.rename_conversation = None;
             }
         }
 
@@ -1228,6 +1342,17 @@ fn tool_badge_color(tool_name: &str) -> egui::Color32 {
         egui::Color32::from_rgb(255, 100, 150)
     } else {
         egui::Color32::from_rgb(180, 180, 180)
+    }
+}
+
+/// Format elapsed seconds as a compact human-readable duration (e.g. "4m 23s", "1h 2m").
+fn format_elapsed(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
     }
 }
 
