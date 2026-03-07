@@ -15,6 +15,8 @@ const MAX_LIVE_TOOL_PROGRESS_LINES: usize = 200;
 pub struct AgentApp {
     events: Vec<FrontendEvent>,
     event_rx: Receiver<FrontendEvent>,
+    /// Sender used to deliver background refresh results back into the event loop.
+    refresh_tx: flume::Sender<FrontendEvent>,
     api_client: ApiClient,
     current_state: AgentVisualState,
     user_input: String,
@@ -52,6 +54,10 @@ pub struct AgentApp {
     rename_conversation: Option<(String, String)>,
     /// Full text to show in the Mind event detail pop-out window.
     event_detail_popup: Option<String>,
+    /// Guards to prevent duplicate in-flight background refresh requests.
+    status_refresh_in_flight: bool,
+    conversations_refresh_in_flight: bool,
+    chat_history_refresh_in_flight: bool,
 }
 
 struct StreamingChatPreview {
@@ -81,6 +87,8 @@ impl AgentApp {
     pub fn new(api_client: ApiClient, fallback_config: AgentConfig) -> Self {
         let runtime = tokio::runtime::Runtime::new().expect("UI tokio runtime");
         let (event_tx, event_rx) = flume::unbounded();
+        // Keep a sender clone so background refresh tasks can deliver results into the loop.
+        let refresh_tx = event_tx.clone();
 
         let event_client = api_client.clone();
         runtime.spawn(async move {
@@ -115,6 +123,7 @@ impl AgentApp {
         let mut app = Self {
             events: Vec::new(),
             event_rx,
+            refresh_tx,
             api_client,
             current_state: AgentVisualState::Idle,
             user_input: String::new(),
@@ -142,6 +151,9 @@ impl AgentApp {
             confirm_delete_conversation_id: None,
             rename_conversation: None,
             event_detail_popup: None,
+            status_refresh_in_flight: false,
+            conversations_refresh_in_flight: false,
+            chat_history_refresh_in_flight: false,
         };
 
         app.refresh_status();
@@ -167,62 +179,68 @@ impl AgentApp {
     }
 
     fn refresh_status(&mut self) {
-        match self.runtime.block_on(self.api_client.get_agent_status()) {
-            Ok(status) => {
-                self.current_state = status.visual_state;
-                self.visual_state_since = status.visual_state_since;
-                self.current_activity = status.current_activity;
-            }
-            Err(error) => {
-                tracing::warn!("Failed to refresh backend status: {}", error);
-            }
+        if self.status_refresh_in_flight {
+            return;
         }
+        self.status_refresh_in_flight = true;
+        let client = self.api_client.clone();
+        let tx = self.refresh_tx.clone();
+        self.runtime.spawn(async move {
+            match client.get_agent_status().await {
+                Ok(status) => {
+                    let _ = tx.send(FrontendEvent::StatusRefreshed {
+                        visual_state: status.visual_state,
+                        visual_state_since: status.visual_state_since,
+                        current_activity: status.current_activity,
+                    });
+                }
+                Err(error) => {
+                    tracing::warn!("Failed to refresh backend status: {}", error);
+                }
+            }
+        });
     }
 
     fn refresh_conversations(&mut self) {
-        match self
-            .runtime
-            .block_on(self.api_client.list_conversations(100))
-        {
-            Ok(conversations) => {
-                self.conversations = conversations;
-                if self
-                    .conversations
-                    .iter()
-                    .all(|c| c.id != self.active_conversation_id)
-                {
-                    self.active_conversation_id = self
-                        .conversations
-                        .first()
-                        .map(|c| c.id.clone())
-                        .unwrap_or_else(|| DEFAULT_CHAT_CONVERSATION_ID.to_string());
+        if self.conversations_refresh_in_flight {
+            return;
+        }
+        self.conversations_refresh_in_flight = true;
+        let client = self.api_client.clone();
+        let tx = self.refresh_tx.clone();
+        self.runtime.spawn(async move {
+            match client.list_conversations(100).await {
+                Ok(conversations) => {
+                    let _ = tx.send(FrontendEvent::ConversationsRefreshed(conversations));
+                }
+                Err(error) => {
+                    tracing::warn!("Failed to refresh chat conversations: {}", error);
                 }
             }
-            Err(error) => {
-                tracing::warn!("Failed to refresh chat conversations: {}", error);
-                self.push_ui_error(format!("Failed to load conversations: {}", error));
-            }
-        }
+        });
     }
 
     fn refresh_chat_history(&mut self) {
-        let conversation_id = self.active_conversation_id.clone();
-        match self
-            .runtime
-            .block_on(self.api_client.list_messages(&conversation_id, 200))
-        {
-            Ok(history) => {
-                self.chat_history = history;
-            }
-            Err(error) => {
-                tracing::warn!(
-                    "Failed to refresh chat history for {}: {}",
-                    conversation_id,
-                    error
-                );
-                self.push_ui_error(format!("Failed to load chat history: {}", error));
-            }
+        if self.chat_history_refresh_in_flight {
+            return;
         }
+        self.chat_history_refresh_in_flight = true;
+        let conversation_id = self.active_conversation_id.clone();
+        let client = self.api_client.clone();
+        let tx = self.refresh_tx.clone();
+        self.runtime.spawn(async move {
+            match client.list_messages(&conversation_id, 200).await {
+                Ok(messages) => {
+                    let _ = tx.send(FrontendEvent::ChatHistoryRefreshed {
+                        conversation_id,
+                        messages,
+                    });
+                }
+                Err(error) => {
+                    tracing::warn!("Failed to refresh chat history for {}: {}", conversation_id, error);
+                }
+            }
+        });
     }
 
     fn refresh_scheduled_jobs(&mut self) {
@@ -595,6 +613,10 @@ impl eframe::App for AgentApp {
                         {
                             self.streaming_chat_preview = None;
                         }
+                        // Streaming finished: pull the committed message immediately instead of
+                        // waiting up to 2 s for the periodic poll to fire.
+                        self.refresh_chat_history();
+                        self.refresh_conversations();
                     } else {
                         self.streaming_chat_preview = Some(StreamingChatPreview {
                             conversation_id: conversation_id.clone(),
@@ -612,11 +634,12 @@ impl eframe::App for AgentApp {
                 }
                 FrontendEvent::ActionTaken { action, .. } => {
                     self.last_action = Some(action.clone());
-                    if action.contains("operator") {
-                        self.refresh_conversations();
-                        self.refresh_chat_history();
-                        self.streaming_chat_preview = None;
-                    }
+                    // Always refresh when any action completes; the old `action.contains("operator")`
+                    // guard was too narrow and caused responses from non-operator loop cycles to be
+                    // missed, leaving the UI stale until the next 2-second poll fired.
+                    self.refresh_conversations();
+                    self.refresh_chat_history();
+                    self.streaming_chat_preview = None;
                 }
                 FrontendEvent::OrientationUpdate(summary) => {
                     self.last_orientation = Some(summary.clone());
@@ -631,6 +654,45 @@ impl eframe::App for AgentApp {
                             .push((tool_name.clone(), reason.clone()));
                     }
                     // Don't push ApprovalRequest into the activity log — it gets its own popup
+                    continue;
+                }
+                // --- Internal data-delivery events from background refresh tasks ---
+                FrontendEvent::StatusRefreshed {
+                    visual_state,
+                    visual_state_since,
+                    current_activity,
+                } => {
+                    self.status_refresh_in_flight = false;
+                    self.current_state = visual_state.clone();
+                    self.visual_state_since = *visual_state_since;
+                    self.current_activity = current_activity.clone();
+                    continue;
+                }
+                FrontendEvent::ConversationsRefreshed(conversations) => {
+                    self.conversations_refresh_in_flight = false;
+                    self.conversations = conversations.clone();
+                    if self
+                        .conversations
+                        .iter()
+                        .all(|c| c.id != self.active_conversation_id)
+                    {
+                        self.active_conversation_id = self
+                            .conversations
+                            .first()
+                            .map(|c| c.id.clone())
+                            .unwrap_or_else(|| DEFAULT_CHAT_CONVERSATION_ID.to_string());
+                    }
+                    continue;
+                }
+                FrontendEvent::ChatHistoryRefreshed {
+                    conversation_id,
+                    messages,
+                } => {
+                    self.chat_history_refresh_in_flight = false;
+                    // Only apply if the response is for the conversation we still have open.
+                    if conversation_id == &self.active_conversation_id {
+                        self.chat_history = messages.clone();
+                    }
                     continue;
                 }
                 _ => {}

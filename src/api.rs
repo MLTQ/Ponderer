@@ -239,6 +239,20 @@ pub enum FrontendEvent {
     CycleStart {
         label: String,
     },
+    // --- Internal UI data-delivery variants (not from backend WS) ---
+    /// Result of a background agent status refresh.
+    StatusRefreshed {
+        visual_state: AgentVisualState,
+        visual_state_since: Option<DateTime<Utc>>,
+        current_activity: Option<String>,
+    },
+    /// Result of a background conversation list refresh.
+    ConversationsRefreshed(Vec<ChatConversation>),
+    /// Result of a background chat history refresh.
+    ChatHistoryRefreshed {
+        conversation_id: String,
+        messages: Vec<ChatMessage>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
