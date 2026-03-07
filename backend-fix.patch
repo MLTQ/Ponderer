@@ -1,0 +1,65 @@
+From d68a55fe078d9992f6b4952385078d0d5f0c71f4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 7 Mar 2026 16:39:09 +0000
+Subject: [PATCH] fix: yield ambient tick immediately when operator messages
+ arrive mid-tick
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The orientation LLM call (and potentially journal/disposition LLM calls)
+inside run_ambient_tick can take 5-30+ seconds to complete. If a user sends
+a message while this is running, the agent would not process it until the
+entire ambient tick finished — adding multi-second latency to every response
+that arrives during an ambient cycle.
+
+Add has_pending_operator_messages() checks at two points:
+  1. After maybe_update_orientation() returns — before execute_disposition
+     (which may issue another LLM call for journaling)
+  2. After execute_disposition() — before self-directive and heartbeat
+
+When pending messages are found, the function returns early with the
+computed orientation so the caller can still use it for tick-duration
+calculation. The engaged loop on the next iteration picks up the messages
+immediately without sleeping.
+
+https://claude.ai/code/session_01V9hxaXY8jJ1S5ABTe8bBDo
+---
+ src/agent/mod.rs | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/src/agent/mod.rs b/src/agent/mod.rs
+index 273cf71..01d6a3a 100644
+--- a/src/agent/mod.rs
++++ b/src/agent/mod.rs
+@@ -2650,6 +2650,15 @@ impl Agent {
+ 
+         let previous_orientation = self.last_orientation.read().await.clone();
+         let orientation = self.maybe_update_orientation(pending_events).await;
++
++        // The orientation LLM call can take 5-30+ seconds. Check again for operator
++        // messages that may have arrived while it was running. If any are pending,
++        // skip all further ambient work (disposition, journal, heartbeat, social) so the
++        // engaged loop can handle them immediately on the next iteration.
++        if self.has_pending_operator_messages().await {
++            return orientation;
++        }
++
+         if let Some(ref orientation) = orientation {
+             self.execute_disposition(
+                 &config_snapshot,
+@@ -2660,6 +2669,11 @@ impl Agent {
+             .await;
+         }
+ 
++        // Re-check after execute_disposition (may include a journal LLM call).
++        if self.has_pending_operator_messages().await {
++            return orientation;
++        }
++
+         self.maybe_run_self_directive(&config_snapshot, pending_events)
+             .await;
+ 
+-- 
+2.43.0
+
