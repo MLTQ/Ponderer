@@ -274,7 +274,7 @@ pub fn render_event_log(
 }
 
 /// Threshold above which an expand button is shown.
-const EXPAND_THRESHOLD: usize = 100;
+const EXPAND_THRESHOLD: usize = 200;
 
 /// Render one line with optional text truncation + an expand button.
 /// If `full_text` exceeds `EXPAND_THRESHOLD` chars, show a truncated version
@@ -817,6 +817,8 @@ fn render_tool_calls_panel(
 }
 
 fn render_streaming_preview_bubble(ui: &mut egui::Ui, preview: &str, max_bubble_width: f32) {
+    let (display_text, thoughts) = strip_inline_thinking_tags(preview);
+
     ui.group(|ui| {
         let inner_width = (max_bubble_width - 14.0).max(100.0);
         ui.set_min_width(inner_width);
@@ -834,7 +836,23 @@ fn render_streaming_preview_bubble(ui: &mut egui::Ui, preview: &str, max_bubble_
             ui.label(RichText::new("live").weak().small().italics());
         });
 
-        ui.add(egui::Label::new(force_wrap_long_tokens(preview, wrap_token_len)).wrap());
+        if !thoughts.is_empty() {
+            egui::CollapsingHeader::new(format!("Thinking ({})", thoughts.len()))
+                .id_salt("streaming_thinking")
+                .default_open(false)
+                .show(ui, |ui| {
+                    for thought in &thoughts {
+                        ui.group(|ui| {
+                            ui.monospace(force_wrap_long_tokens(thought.trim(), wrap_token_len));
+                        });
+                    }
+                });
+        }
+
+        let trimmed_display = display_text.trim();
+        if !trimmed_display.is_empty() {
+            ui.add(egui::Label::new(force_wrap_long_tokens(trimmed_display, wrap_token_len)).wrap());
+        }
     });
 }
 

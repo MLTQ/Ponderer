@@ -379,6 +379,36 @@ impl SettingsPanel {
         ui.add_space(8.0);
 
         ui.horizontal(|ui| {
+            ui.label("Private chat mode:");
+            let selected_text = match self.config.private_chat_mode.as_str() {
+                "direct" => "Direct (single-turn)",
+                _ => "Agentic (multi-turn)",
+            };
+            egui::ComboBox::from_id_salt("private_chat_mode")
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.config.private_chat_mode,
+                        "agentic".to_string(),
+                        "Agentic (multi-turn)",
+                    );
+                    ui.selectable_value(
+                        &mut self.config.private_chat_mode,
+                        "direct".to_string(),
+                        "Direct (single-turn)",
+                    );
+                });
+        });
+        ui.label(
+            egui::RichText::new(
+                "Direct mode yields after one reply while still allowing tool calls during that turn.",
+            )
+            .small()
+            .weak(),
+        );
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
             ui.label("Loop heat shock threshold:");
             ui.add(egui::DragValue::new(&mut self.config.loop_heat_threshold).range(1..=200));
         });
