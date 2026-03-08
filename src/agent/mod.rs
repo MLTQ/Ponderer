@@ -701,6 +701,18 @@ impl Agent {
     }
 
     async fn wait_with_schedule_awareness(&self, base_duration: Duration, label: &str) {
+        self.wait_with_schedule_awareness_tracked(base_duration, label)
+            .await;
+    }
+
+    /// Like `wait_with_schedule_awareness` but returns `true` when the sleep
+    /// was interrupted because a new operator message arrived (as opposed to a
+    /// scheduled-job timer or a normal timeout).
+    async fn wait_with_schedule_awareness_tracked(
+        &self,
+        base_duration: Duration,
+        label: &str,
+    ) -> bool {
         let adjusted = {
             let db_lock = self.database.read().await;
             match db_lock.as_ref() {
@@ -724,7 +736,17 @@ impl Agent {
             }
         };
 
-        self.wait_with_interruptible_sleep(adjusted, label).await;
+        let woken = self.wait_for_wake_or_timeout(adjusted).await;
+        if woken {
+            self.emit(AgentEvent::Observation(format!(
+                "Wake signal interrupted {} wait; resuming now.",
+                label
+            )))
+            .await;
+        }
+        // Return true only when there is actually a pending operator message
+        // (not just any wake signal such as a config reload).
+        woken && self.has_pending_operator_messages().await
     }
 
     async fn maybe_enqueue_due_scheduled_jobs(&self) -> bool {
@@ -860,11 +882,26 @@ impl Agent {
             self.maybe_run_heartbeat().await;
 
             let poll_interval = config_snapshot.poll_interval_secs;
-            self.wait_with_schedule_awareness(
-                Duration::from_secs(poll_interval),
-                "legacy-poll-interval",
-            )
-            .await;
+            let woken_by_message = self
+                .wait_with_schedule_awareness_tracked(
+                    Duration::from_secs(poll_interval),
+                    "legacy-poll-interval",
+                )
+                .await;
+
+            // Fast-path: if the wake was triggered by a new operator message,
+            // process it immediately before spending time on skill polling.
+            // This keeps chat latency low even when skills are slow.
+            if woken_by_message {
+                if let Err(e) = self.process_chat_messages().await {
+                    tracing::warn!("Fast-path chat processing error: {}", e);
+                }
+                // After replying, check for more pending messages before
+                // proceeding to the full cycle (which includes skill polling).
+                if !self.has_pending_operator_messages().await {
+                    continue;
+                }
+            }
 
             if let Err(e) = self.run_cycle().await {
                 tracing::error!("Agent cycle error: {}", e);
@@ -2555,6 +2592,17 @@ impl Agent {
             &chat_context,
         );
 
+        // If the operator sent a message while we were polling skills, defer skill
+        // analysis to the next cycle so that the chat reply comes back promptly.
+        if self.has_pending_operator_messages().await {
+            self.emit(AgentEvent::Observation(
+                "Deferring skill analysis: new operator message arrived; processing chat first."
+                    .to_string(),
+            ))
+            .await;
+            return Ok(ambient_context_events);
+        }
+
         match agentic_loop
             .run(&skill_system_prompt, &user_message, &tool_ctx)
             .await
@@ -3067,6 +3115,17 @@ impl Agent {
             &chat_context,
         );
 
+        // If the operator sent a message while we were polling skills, defer skill
+        // analysis to the next cycle so that the chat reply comes back promptly.
+        if self.has_pending_operator_messages().await {
+            self.emit(AgentEvent::Observation(
+                "Deferring skill analysis: new operator message arrived; processing chat first."
+                    .to_string(),
+            ))
+            .await;
+            return Ok(());
+        }
+
         match agentic_loop
             .run(&skill_system_prompt, &user_message, &tool_ctx)
             .await
@@ -3142,6 +3201,13 @@ impl Agent {
 
         self.set_state(AgentVisualState::Idle).await;
 
+        // Re-process any operator messages that arrived while skill events were
+        // being analysed.  Skill processing can take tens of seconds; this
+        // ensures replies are sent without waiting for the next poll cycle.
+        if self.has_pending_operator_messages().await {
+            self.process_chat_messages().await?;
+        }
+
         Ok(())
     }
 
@@ -3181,6 +3247,14 @@ impl Agent {
                 messages_by_conversation.push((conversation_id, vec![msg]));
             }
         }
+        // Process conversations with the most recently active messages first.
+        // This ensures the conversation the operator is currently using gets
+        // attended to before older scheduled-job or background conversations.
+        messages_by_conversation.sort_by(|(_, a_msgs), (_, b_msgs)| {
+            let a_latest = a_msgs.iter().map(|m| m.created_at).max().unwrap_or_default();
+            let b_latest = b_msgs.iter().map(|m| m.created_at).max().unwrap_or_default();
+            b_latest.cmp(&a_latest) // descending: newest first
+        });
 
         let total_messages = messages_by_conversation
             .iter()
@@ -3236,7 +3310,7 @@ impl Agent {
         );
 
         let chat_system_prompt = format!(
-            "{}\n\nYou are in direct operator chat mode. Use tools when they improve correctness or save effort.\nYou may run multiple internal turns before yielding back to the operator.\nYou are encouraged to post to Graphchan under your own name when you have something worth sharing — thoughts, work, observations, or anything genuine.\nIf you detect persistent topics/projects/reminders, append a concerns block:\n{}\n[{{\"summary\":\"short title\",\"kind\":\"project|personal_interest|system_health|reminder|conversation|household_awareness\",\"touch_only\":false,\"confidence\":0.0,\"notes\":\"optional\",\"related_memory_keys\":[\"optional-key\"]}}]\n{}\nUse an empty array when there are no concern updates.\nEvery response MUST end with a turn-control JSON block in this exact envelope:\n{}\n{{\"decision\":\"continue|yield\",\"status\":\"still_working|done|blocked\",\"needs_user_input\":true|false,\"user_message\":\"operator-facing text\",\"reason\":\"short internal rationale\"}}\n{}\nChoose decision='continue' only if you can make immediate progress now without user clarification.\nChoose decision='yield' when done, blocked, or waiting on user input.\nWhen genuinely wrapping up a work session (decision=yield, task complete or naturally pausing), call write_session_handoff once with a concise note: what you worked on, how far you got, the immediate next step, and open questions. The note is one-shot: it will be injected at the top of the next session's context and then cleared automatically. Do NOT call it mid-task or on every turn.",
+            "{}\n\nYou are in direct operator chat mode. Use tools when they improve correctness or save effort.\nYou may run multiple internal turns before yielding back to the operator.\nFocus on the operator's request; do not post to external channels (Graphchan, etc.) unless explicitly asked.\nIf you detect persistent topics/projects/reminders, append a concerns block:\n{}\n[{{\"summary\":\"short title\",\"kind\":\"project|personal_interest|system_health|reminder|conversation|household_awareness\",\"touch_only\":false,\"confidence\":0.0,\"notes\":\"optional\",\"related_memory_keys\":[\"optional-key\"]}}]\n{}\nUse an empty array when there are no concern updates.\nEvery response MUST end with a turn-control JSON block in this exact envelope:\n{}\n{{\"decision\":\"continue|yield\",\"status\":\"still_working|done|blocked\",\"needs_user_input\":true|false,\"user_message\":\"operator-facing text\",\"reason\":\"short internal rationale\"}}\n{}\nChoose decision='continue' only if you can make immediate progress now without user clarification.\nChoose decision='yield' when done, blocked, or waiting on user input.\nWhen genuinely wrapping up a work session (decision=yield, task complete or naturally pausing), call write_session_handoff once with a concise note: what you worked on, how far you got, the immediate next step, and open questions. The note is one-shot: it will be injected at the top of the next session's context and then cleared automatically. Do NOT call it mid-task or on every turn.",
             system_prompt,
             CHAT_CONCERNS_BLOCK_START,
             CHAT_CONCERNS_BLOCK_END,
