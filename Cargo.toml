@@ -23,6 +23,7 @@ toml = "0.8"
 eframe = "0.29"
 egui = "0.29"
 rfd = "0.15"
+rodio = "0.19"
 
 # Error handling
 anyhow = "1.0"

@@ -3,11 +3,10 @@ use flume::Receiver;
 
 use super::avatar::AvatarSet;
 use super::character::CharacterPanel;
-use super::comfy_settings::ComfySettingsPanel;
-use super::settings::SettingsPanel;
+use super::settings::{ScheduledJobAction, SettingsPanel};
 use crate::api::{
     AgentVisualState, ApiClient, ChatConversation, ChatMessage, ChatTurnPhase, FrontendEvent,
-    OrientationSummary, DEFAULT_CHAT_CONVERSATION_ID,
+    OrientationSummary, UpdateScheduledJobRequest, DEFAULT_CHAT_CONVERSATION_ID,
 };
 use crate::config::AgentConfig;
 
@@ -22,7 +21,6 @@ pub struct AgentApp {
     runtime: tokio::runtime::Runtime,
     settings_panel: SettingsPanel,
     character_panel: CharacterPanel,
-    comfy_settings_panel: ComfySettingsPanel,
     avatars: Option<AvatarSet>,
     avatars_loaded: bool,
     conversations: Vec<ChatConversation>,
@@ -44,6 +42,16 @@ pub struct AgentApp {
     last_journal: Option<String>,
     /// Latest live LLM token stream content (any conversation, any cycle).
     live_stream_text: Option<String>,
+    /// Timestamp when the current visual state was entered (from AgentRuntimeStatus).
+    visual_state_since: Option<chrono::DateTime<chrono::Utc>>,
+    /// Short description of what the agent is currently doing (from AgentRuntimeStatus).
+    current_activity: Option<String>,
+    /// Conversation pending delete confirmation (id).
+    confirm_delete_conversation_id: Option<String>,
+    /// Conversation pending rename: (id, draft_title).
+    rename_conversation: Option<(String, String)>,
+    /// Full text to show in the Mind event detail pop-out window.
+    event_detail_popup: Option<String>,
 }
 
 struct StreamingChatPreview {
@@ -90,8 +98,19 @@ impl AgentApp {
             }
         };
 
-        let mut comfy_settings_panel = ComfySettingsPanel::new();
-        comfy_settings_panel.load_workflow_from_config(&startup_config);
+        let plugin_manifests = match runtime.block_on(api_client.list_plugins()) {
+            Ok(manifests) => manifests,
+            Err(error) => {
+                tracing::warn!(
+                    "Failed to load plugin manifests from backend ({}); settings tabs will use core defaults only",
+                    error
+                );
+                Vec::new()
+            }
+        };
+
+        let mut settings_panel = SettingsPanel::new(startup_config.clone());
+        settings_panel.set_plugin_manifests(plugin_manifests);
 
         let mut app = Self {
             events: Vec::new(),
@@ -100,9 +119,8 @@ impl AgentApp {
             current_state: AgentVisualState::Idle,
             user_input: String::new(),
             runtime,
-            settings_panel: SettingsPanel::new(startup_config.clone()),
+            settings_panel,
             character_panel: CharacterPanel::new(startup_config),
-            comfy_settings_panel,
             avatars: None,
             avatars_loaded: false,
             conversations: Vec::new(),
@@ -119,11 +137,17 @@ impl AgentApp {
             last_action: None,
             last_journal: None,
             live_stream_text: None,
+            visual_state_since: None,
+            current_activity: None,
+            confirm_delete_conversation_id: None,
+            rename_conversation: None,
+            event_detail_popup: None,
         };
 
         app.refresh_status();
         app.refresh_conversations();
         app.refresh_chat_history();
+        app.refresh_scheduled_jobs();
         app
     }
 
@@ -131,10 +155,23 @@ impl AgentApp {
         self.events.push(FrontendEvent::Error(message.into()));
     }
 
+    fn voice_orb_auto_play_enabled(&self) -> bool {
+        self.settings_panel
+            .config
+            .plugin_settings
+            .get("voice-orb")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|settings| settings.get("auto_play_generated_audio"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+
     fn refresh_status(&mut self) {
         match self.runtime.block_on(self.api_client.get_agent_status()) {
             Ok(status) => {
                 self.current_state = status.visual_state;
+                self.visual_state_since = status.visual_state_since;
+                self.current_activity = status.current_activity;
             }
             Err(error) => {
                 tracing::warn!("Failed to refresh backend status: {}", error);
@@ -185,6 +222,134 @@ impl AgentApp {
                 );
                 self.push_ui_error(format!("Failed to load chat history: {}", error));
             }
+        }
+    }
+
+    fn refresh_scheduled_jobs(&mut self) {
+        match self
+            .runtime
+            .block_on(self.api_client.list_scheduled_jobs(200))
+        {
+            Ok(jobs) => {
+                self.settings_panel.set_scheduled_jobs(jobs);
+                self.settings_panel.set_scheduled_jobs_error(None);
+            }
+            Err(error) => {
+                tracing::warn!("Failed to refresh scheduled jobs: {}", error);
+                self.settings_panel
+                    .set_scheduled_jobs_error(Some(format!("Failed to load schedules: {}", error)));
+            }
+        }
+    }
+
+    fn apply_scheduled_job_actions(&mut self, actions: Vec<ScheduledJobAction>) {
+        let mut should_refresh = false;
+
+        for action in actions {
+            match action {
+                ScheduledJobAction::Refresh => {
+                    should_refresh = true;
+                }
+                ScheduledJobAction::Create {
+                    name,
+                    prompt,
+                    interval_minutes,
+                    enabled,
+                } => match self.runtime.block_on(self.api_client.create_scheduled_job(
+                    &name,
+                    &prompt,
+                    interval_minutes,
+                )) {
+                    Ok(job) => {
+                        if !enabled {
+                            let request = UpdateScheduledJobRequest {
+                                enabled: Some(false),
+                                ..Default::default()
+                            };
+                            if let Err(error) = self
+                                .runtime
+                                .block_on(self.api_client.update_scheduled_job(&job.id, &request))
+                            {
+                                self.settings_panel.set_scheduled_jobs_error(Some(format!(
+                                    "Created schedule '{}' but failed to disable it: {}",
+                                    name, error
+                                )));
+                                self.push_ui_error(format!(
+                                    "Created schedule '{}' but failed to disable it: {}",
+                                    name, error
+                                ));
+                            }
+                        }
+                        should_refresh = true;
+                    }
+                    Err(error) => {
+                        self.settings_panel.set_scheduled_jobs_error(Some(format!(
+                            "Failed to create schedule '{}': {}",
+                            name, error
+                        )));
+                        self.push_ui_error(format!(
+                            "Failed to create schedule '{}': {}",
+                            name, error
+                        ));
+                    }
+                },
+                ScheduledJobAction::Update {
+                    job_id,
+                    name,
+                    prompt,
+                    interval_minutes,
+                    enabled,
+                } => {
+                    let request = UpdateScheduledJobRequest {
+                        name: Some(name.clone()),
+                        prompt: Some(prompt),
+                        interval_minutes: Some(interval_minutes),
+                        enabled: Some(enabled),
+                    };
+                    match self
+                        .runtime
+                        .block_on(self.api_client.update_scheduled_job(&job_id, &request))
+                    {
+                        Ok(_) => {
+                            should_refresh = true;
+                        }
+                        Err(error) => {
+                            self.settings_panel.set_scheduled_jobs_error(Some(format!(
+                                "Failed to update schedule '{}': {}",
+                                name, error
+                            )));
+                            self.push_ui_error(format!(
+                                "Failed to update schedule '{}': {}",
+                                name, error
+                            ));
+                        }
+                    }
+                }
+                ScheduledJobAction::Delete { job_id } => {
+                    match self
+                        .runtime
+                        .block_on(self.api_client.delete_scheduled_job(&job_id))
+                    {
+                        Ok(()) => {
+                            should_refresh = true;
+                        }
+                        Err(error) => {
+                            self.settings_panel.set_scheduled_jobs_error(Some(format!(
+                                "Failed to delete schedule '{}': {}",
+                                job_id, error
+                            )));
+                            self.push_ui_error(format!(
+                                "Failed to delete schedule '{}': {}",
+                                job_id, error
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        if should_refresh {
+            self.refresh_scheduled_jobs();
         }
     }
 
@@ -259,15 +424,60 @@ impl AgentApp {
         }
     }
 
+    fn delete_conversation(&mut self, conversation_id: &str) {
+        match self
+            .runtime
+            .block_on(self.api_client.delete_conversation(conversation_id))
+        {
+            Ok(()) => {
+                // If we deleted the active conversation, switch to a different one.
+                if self.active_conversation_id == conversation_id {
+                    self.streaming_chat_preview = None;
+                    self.live_tool_progress
+                        .retain(|e| e.conversation_id != conversation_id);
+                    self.refresh_conversations();
+                    // Pick the first remaining conversation, or create a new one.
+                    if let Some(first) = self.conversations.first() {
+                        self.active_conversation_id = first.id.clone();
+                    } else {
+                        self.create_new_conversation();
+                        return;
+                    }
+                    self.refresh_chat_history();
+                } else {
+                    self.refresh_conversations();
+                }
+            }
+            Err(error) => {
+                tracing::error!("Failed to delete conversation: {}", error);
+                self.push_ui_error(format!("Failed to delete conversation: {}", error));
+            }
+        }
+    }
+
+    fn rename_conversation(&mut self, conversation_id: &str, title: &str) {
+        match self
+            .runtime
+            .block_on(self.api_client.update_conversation_title(conversation_id, title))
+        {
+            Ok(_) => {
+                self.refresh_conversations();
+            }
+            Err(error) => {
+                tracing::error!("Failed to rename conversation: {}", error);
+                self.push_ui_error(format!("Failed to rename conversation: {}", error));
+            }
+        }
+    }
+
     fn persist_config(&mut self, config: AgentConfig) {
         match self
             .runtime
             .block_on(self.api_client.update_config(&config))
         {
             Ok(saved) => {
-                self.settings_panel.config = saved.clone();
+                self.settings_panel.sync_from_config(saved.clone());
                 self.character_panel.config = saved.clone();
-                self.comfy_settings_panel.load_workflow_from_config(&saved);
                 self.avatars = None;
                 self.avatars_loaded = false;
                 tracing::info!("Config saved through backend API");
@@ -364,8 +574,17 @@ impl eframe::App for AgentApp {
                     // Capture global live stream regardless of which conversation is active.
                     if *done {
                         self.live_stream_text = None;
+                        // Revert Writing back to Thinking so the backend StateChanged that
+                        // follows can take over normally.
+                        if matches!(self.current_state, AgentVisualState::Writing) {
+                            self.current_state = AgentVisualState::Thinking;
+                        }
                     } else if !content.trim().is_empty() {
                         self.live_stream_text = Some(content.clone());
+                        // Show Writing while tokens are actively streaming to the user.
+                        if matches!(self.current_state, AgentVisualState::Thinking) {
+                            self.current_state = AgentVisualState::Writing;
+                        }
                     }
                     // Per-conversation streaming preview for the chat pane.
                     if *done && content.trim().is_empty() {
@@ -407,11 +626,7 @@ impl eframe::App for AgentApp {
                 }
                 FrontendEvent::ApprovalRequest { tool_name, reason } => {
                     // Deduplicate: only add if not already pending
-                    if !self
-                        .pending_approvals
-                        .iter()
-                        .any(|(t, _)| t == tool_name)
-                    {
+                    if !self.pending_approvals.iter().any(|(t, _)| t == tool_name) {
                         self.pending_approvals
                             .push((tool_name.clone(), reason.clone()));
                     }
@@ -423,53 +638,49 @@ impl eframe::App for AgentApp {
             self.events.push(event);
         }
 
-        // --- Tool approval popup ---
-        // Render one window per pending approval. Clicks are processed below, after rendering.
+        // --- Approval requests ---
+        // Rendered inside the activity panel (not as a floating egui::Window) so they appear
+        // reliably on all platforms. egui::Window::anchor is fragile on Linux/Wayland: the
+        // viewport rect may not be known on the first frame, causing the window to be placed
+        // off-screen and remembered there by ID, never recovering.
         let mut approve_tool: Option<String> = None;
         let mut dismiss_tool: Option<String> = None;
-
-        for (tool_name, reason) in &self.pending_approvals {
-            let window_id = egui::Id::new(format!("approval_{}", tool_name));
-            egui::Window::new(format!("⚠️ Approval needed: {}", tool_name))
-                .id(window_id)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label(reason.as_str());
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(
-                                egui::RichText::new("✅ Allow this session")
-                                    .color(egui::Color32::from_rgb(80, 200, 100)),
-                            )
-                            .clicked()
-                        {
-                            approve_tool = Some(tool_name.clone());
-                        }
-                        if ui.button("✖ Dismiss").clicked() {
-                            dismiss_tool = Some(tool_name.clone());
-                        }
-                    });
-                });
-        }
-
-        if let Some(ref tool) = approve_tool {
-            match self.runtime.block_on(self.api_client.approve_tool(tool)) {
-                Ok(()) => tracing::info!("Session approval granted for: {}", tool),
-                Err(e) => self.push_ui_error(format!("Failed to approve tool: {}", e)),
-            }
-            self.pending_approvals.retain(|(t, _)| t != tool);
-        }
-        if let Some(ref tool) = dismiss_tool {
-            self.pending_approvals.retain(|(t, _)| t != tool);
-        }
 
         egui::SidePanel::right("activity_panel")
             .resizable(true)
             .default_width(340.0)
             .show_animated(ctx, self.show_activity_panel, |ui| {
+                // Pending approvals at the very top — hard to miss.
+                for (tool_name, reason) in &self.pending_approvals {
+                    ui.group(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.colored_label(
+                            egui::Color32::from_rgb(255, 160, 50),
+                            format!("! Approval needed: {}", tool_name),
+                        );
+                        ui.add_space(2.0);
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(reason.as_str()).small()).wrap(),
+                        );
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(
+                                    egui::RichText::new("Allow this session")
+                                        .color(egui::Color32::from_rgb(80, 200, 100)),
+                                )
+                                .clicked()
+                            {
+                                approve_tool = Some(tool_name.clone());
+                            }
+                            if ui.button("Dismiss").clicked() {
+                                dismiss_tool = Some(tool_name.clone());
+                            }
+                        });
+                    });
+                    ui.add_space(4.0);
+                }
+
                 ui.heading("🧠 Mind");
                 ui.add_space(4.0);
 
@@ -512,9 +723,19 @@ impl eframe::App for AgentApp {
                                 .italics(),
                         );
                     }
+                    // Show current activity while working (e.g. "Requesting LLM...").
+                    // This makes it visible what the agent is waiting on when the GPU is idle.
+                    if let Some(ref activity) = self.current_activity.clone() {
+                        ui.label(
+                            egui::RichText::new(format!("⏳ {}", truncate_str(activity, 90)))
+                                .small()
+                                .color(egui::Color32::LIGHT_BLUE),
+                        );
+                    }
                     if self.last_orientation.is_none()
                         && self.last_action.is_none()
                         && self.last_journal.is_none()
+                        && self.current_activity.is_none()
                     {
                         ui.label(
                             egui::RichText::new("Waiting for agent state...")
@@ -528,44 +749,37 @@ impl eframe::App for AgentApp {
                 ui.add_space(4.0);
 
                 // Zone 2: Live LLM token stream.
-                egui::CollapsingHeader::new(
-                    egui::RichText::new("💭 Live Stream").small().strong(),
-                )
-                .id_salt("live_stream_header")
-                .default_open(true)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(110.0)
-                        .stick_to_bottom(true)
-                        .id_salt("live_stream_scroll")
-                        .show(ui, |ui| {
-                            if let Some(ref text) = self.live_stream_text {
-                                let preview = last_n_chars(text, 600);
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(preview)
-                                            .small()
-                                            .color(egui::Color32::from_gray(200)),
-                                    )
-                                    .wrap(),
-                                );
-                            } else {
-                                ui.label(
-                                    egui::RichText::new("—")
-                                        .weak()
-                                        .small()
-                                        .italics(),
-                                );
-                            }
-                        });
-                });
+                egui::CollapsingHeader::new(egui::RichText::new("💭 Live Stream").small().strong())
+                    .id_salt("live_stream_header")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(110.0)
+                            .stick_to_bottom(true)
+                            .id_salt("live_stream_scroll")
+                            .show(ui, |ui| {
+                                if let Some(ref text) = self.live_stream_text {
+                                    let preview = last_n_chars(text, 600);
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(preview)
+                                                .small()
+                                                .color(egui::Color32::from_gray(200)),
+                                        )
+                                        .wrap(),
+                                    );
+                                } else {
+                                    ui.label(egui::RichText::new("—").weak().small().italics());
+                                }
+                            });
+                    });
 
                 ui.add_space(4.0);
                 ui.separator();
                 ui.add_space(4.0);
 
                 // Zone 3: Grouped turn history log.
-                super::chat::render_event_log(ui, &self.events);
+                super::chat::render_event_log(ui, &self.events, &mut self.event_detail_popup);
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -581,6 +795,25 @@ impl eframe::App for AgentApp {
                                 .small()
                                 .strong(),
                         );
+                        // Show how long the agent has been in the current state.
+                        // This makes "stuck Thinking" immediately visible.
+                        if let Some(since) = self.visual_state_since {
+                            let elapsed = chrono::Utc::now()
+                                .signed_duration_since(since)
+                                .num_seconds()
+                                .max(0) as u64;
+                            if elapsed >= 3 {
+                                ui.label(
+                                    egui::RichText::new(format!("({})", format_elapsed(elapsed)))
+                                        .color(if elapsed > 30 {
+                                            egui::Color32::YELLOW
+                                        } else {
+                                            egui::Color32::GRAY
+                                        })
+                                        .small(),
+                                );
+                            }
+                        }
                         if let Some(ref o) = self.last_orientation {
                             ui.label(egui::RichText::new("|").weak().small());
                             ui.label(
@@ -591,11 +824,7 @@ impl eframe::App for AgentApp {
                         }
                         if let Some(ref action) = self.last_action {
                             ui.label(egui::RichText::new("|").weak().small());
-                            ui.label(
-                                egui::RichText::new(truncate_str(action, 50))
-                                    .weak()
-                                    .small(),
-                            );
+                            ui.label(egui::RichText::new(truncate_str(action, 50)).weak().small());
                         }
                     });
                 });
@@ -639,15 +868,12 @@ impl eframe::App for AgentApp {
                     }
 
                     if ui.button("⚙ Settings").clicked() {
-                        self.settings_panel.show = true;
+                        self.settings_panel.open();
+                        self.refresh_scheduled_jobs();
                     }
 
                     if ui.button("🎭 Character").clicked() {
                         self.character_panel.show = true;
-                    }
-
-                    if ui.button("🎨 Workflow").clicked() {
-                        self.comfy_settings_panel.show = true;
                     }
 
                     let activity_btn_text = if self.show_activity_panel {
@@ -689,6 +915,31 @@ impl eframe::App for AgentApp {
                     self.create_new_conversation();
                 }
 
+                if ui
+                    .button("Rename")
+                    .on_hover_text("Rename this conversation")
+                    .clicked()
+                {
+                    let current_title = self
+                        .conversations
+                        .iter()
+                        .find(|c| c.id == self.active_conversation_id)
+                        .map(|c| c.title.clone())
+                        .unwrap_or_default();
+                    self.rename_conversation =
+                        Some((self.active_conversation_id.clone(), current_title));
+                }
+
+                if ui
+                    .button(
+                        egui::RichText::new("Delete").color(egui::Color32::from_rgb(200, 80, 80)),
+                    )
+                    .on_hover_text("Delete this conversation")
+                    .clicked()
+                {
+                    self.confirm_delete_conversation_id = Some(self.active_conversation_id.clone());
+                }
+
                 if self.active_conversation_id != previous_conversation_id {
                     self.streaming_chat_preview = None;
                     self.refresh_chat_history();
@@ -701,6 +952,7 @@ impl eframe::App for AgentApp {
                 .as_ref()
                 .filter(|preview| preview.conversation_id == self.active_conversation_id)
                 .map(|preview| preview.content.clone());
+            let auto_play_generated_audio = self.voice_orb_auto_play_enabled();
             let active_progress: Vec<LiveToolProgress> = self
                 .live_tool_progress
                 .iter()
@@ -725,6 +977,7 @@ impl eframe::App for AgentApp {
                         &self.chat_history,
                         active_streaming_preview.as_deref(),
                         &mut self.chat_media_cache,
+                        auto_play_generated_audio,
                     );
                 },
             );
@@ -734,22 +987,20 @@ impl eframe::App for AgentApp {
 
             if !active_progress.is_empty() {
                 ui.add_space(6.0);
-                egui::CollapsingHeader::new(
-                    egui::RichText::new("⚡ Live Agent Turn").strong(),
-                )
-                .id_salt("live_agent_turn")
-                .default_open(true)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(170.0)
-                        .stick_to_bottom(true)
-                        .id_salt("live_turn_scroll")
-                        .show(ui, |ui| {
-                            for entry in &active_progress {
-                                render_live_tool_entry(ui, entry);
-                            }
-                        });
-                });
+                egui::CollapsingHeader::new(egui::RichText::new("⚡ Live Agent Turn").strong())
+                    .id_salt("live_agent_turn")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(170.0)
+                            .stick_to_bottom(true)
+                            .id_salt("live_turn_scroll")
+                            .show(ui, |ui| {
+                                for entry in &active_progress {
+                                    render_live_tool_entry(ui, entry);
+                                }
+                            });
+                    });
             }
 
             ui.add_space(6.0);
@@ -788,6 +1039,129 @@ impl eframe::App for AgentApp {
             });
             ui.add_space(8.0);
         });
+
+        // Mind event detail pop-out window.
+        if let Some(ref text) = self.event_detail_popup.clone() {
+            let mut open = true;
+            egui::Window::new("Event Detail")
+                .collapsible(false)
+                .resizable(true)
+                .default_size([560.0, 420.0])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                        ui.add_space(4.0);
+                        if ui.button("Close").clicked() {
+                            self.event_detail_popup = None;
+                        }
+                        ui.add_space(4.0);
+                        ui.separator();
+                        // Fill the remaining space (above the Close button) with a
+                        // scrollable, selectable, read-only text editor.  TextEdit
+                        // handles arbitrarily large text without truncation and lets
+                        // the user select/copy the content.
+                        let available = ui.available_size();
+                        let mut buf = text.clone();
+                        egui::ScrollArea::vertical()
+                            .id_salt("event_detail_scroll")
+                            .show(ui, |ui| {
+                                ui.add_sized(
+                                    available,
+                                    egui::TextEdit::multiline(&mut buf)
+                                        .font(egui::TextStyle::Monospace)
+                                        .interactive(false)
+                                        .desired_width(f32::INFINITY),
+                                );
+                            });
+                    });
+                });
+            if !open {
+                self.event_detail_popup = None;
+            }
+        }
+
+        // Rename-conversation dialog.
+        if self.rename_conversation.is_some() {
+            let mut open = true;
+            let mut confirmed = false;
+            let mut cancelled = false;
+            egui::Window::new("Rename Conversation")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    if let Some((_, ref mut draft)) = self.rename_conversation {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(draft)
+                                .desired_width(280.0)
+                                .hint_text("Conversation title"),
+                        );
+                        response.request_focus();
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Rename").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                confirmed = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                cancelled = true;
+                            }
+                        });
+                    }
+                });
+            if confirmed {
+                if let Some((id, draft)) = self.rename_conversation.take() {
+                    let title = draft.trim().to_string();
+                    if !title.is_empty() {
+                        self.rename_conversation(&id, &title);
+                    }
+                }
+            } else if cancelled || !open {
+                self.rename_conversation = None;
+            }
+        }
+
+        // Delete-conversation confirmation dialog.
+        if let Some(conv_id) = self.confirm_delete_conversation_id.clone() {
+            let title_label = self
+                .conversations
+                .iter()
+                .find(|c| c.id == conv_id)
+                .map(|c| c.title.clone())
+                .unwrap_or_else(|| conv_id.chars().take(12).collect());
+            let mut open = true;
+            egui::Window::new("Delete Conversation?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.label(format!("Delete \"{}\"?", title_label));
+                    ui.label(egui::RichText::new("This cannot be undone.").small().weak());
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("Delete")
+                                    .color(egui::Color32::from_rgb(200, 80, 80)),
+                            )
+                            .clicked()
+                        {
+                            let id_to_delete = conv_id.clone();
+                            self.confirm_delete_conversation_id = None;
+                            self.delete_conversation(&id_to_delete);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.confirm_delete_conversation_id = None;
+                        }
+                    });
+                });
+            if !open {
+                self.confirm_delete_conversation_id = None;
+            }
+        }
 
         if let Some(inspector) = self.prompt_inspector.as_mut() {
             let mut open = inspector.open;
@@ -884,17 +1258,24 @@ impl eframe::App for AgentApp {
         if let Some(new_config) = self.settings_panel.render(ctx) {
             self.persist_config(new_config);
         }
+        let scheduled_job_actions = self.settings_panel.take_scheduled_job_actions();
+        if !scheduled_job_actions.is_empty() {
+            self.apply_scheduled_job_actions(scheduled_job_actions);
+        }
 
         if let Some(new_config) = self.character_panel.render(ctx) {
             self.persist_config(new_config);
         }
 
-        if self
-            .comfy_settings_panel
-            .render(ctx, &mut self.settings_panel.config)
-        {
-            let updated = self.settings_panel.config.clone();
-            self.persist_config(updated);
+        if let Some(ref tool) = approve_tool {
+            match self.runtime.block_on(self.api_client.approve_tool(tool)) {
+                Ok(()) => tracing::info!("Session approval granted for: {}", tool),
+                Err(e) => self.push_ui_error(format!("Failed to approve tool: {}", e)),
+            }
+            self.pending_approvals.retain(|(t, _)| t != tool);
+        }
+        if let Some(ref tool) = dismiss_tool {
+            self.pending_approvals.retain(|(t, _)| t != tool);
         }
 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -923,7 +1304,11 @@ fn render_live_tool_entry(ui: &mut egui::Ui, entry: &LiveToolProgress) {
                 .small(),
         );
         if let Some(ref subtask_id) = entry.subtask_id {
-            ui.label(egui::RichText::new(format!("[{}]", subtask_id)).weak().small());
+            ui.label(
+                egui::RichText::new(format!("[{}]", subtask_id))
+                    .weak()
+                    .small(),
+            );
         }
         let output = truncate_str(&entry.output_preview, 200);
         ui.add(
@@ -957,6 +1342,17 @@ fn tool_badge_color(tool_name: &str) -> egui::Color32 {
         egui::Color32::from_rgb(255, 100, 150)
     } else {
         egui::Color32::from_rgb(180, 180, 180)
+    }
+}
+
+/// Format elapsed seconds as a compact human-readable duration (e.g. "4m 23s", "1h 2m").
+fn format_elapsed(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
     }
 }
 

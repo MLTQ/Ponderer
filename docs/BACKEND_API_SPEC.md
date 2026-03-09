@@ -39,7 +39,10 @@ All `/v1/*` routes require auth in required mode (including `/v1/health`).
 
 - `GET /v1/plugins`
   - Response: array of `BackendPluginManifest`
-  - Includes built-in manifest `builtin.core`
+  - Includes built-in manifests such as `builtin.core`, `builtin.comfy`, and `builtin.orbweaver`, plus any filesystem workflow bundles discovered under the plugin directory
+  - `BackendPluginManifest.kind` distinguishes built-ins from workflow bundles
+  - `BackendPluginManifest.settings_tab` is optional and contains `{ "id", "title", "order" }` when the plugin wants a dedicated settings tab in the frontend
+  - `BackendPluginManifest.settings_schema` is optional and, when present, contains declarative form fields the frontend can render without shipping plugin-specific UI code
 
 ### Conversations and messages
 
@@ -70,6 +73,36 @@ All `/v1/*` routes require auth in required mode (including `/v1/health`).
 
 - `GET /v1/turns/:id/tool-calls`
   - Response: `ChatTurnToolCall[]`
+
+### Scheduled jobs
+
+- `GET /v1/scheduled-jobs?limit=<n>`
+  - Response: `ScheduledJob[]`
+
+- `POST /v1/scheduled-jobs`
+  - Body: `{ "name": "...", "prompt": "...", "interval_minutes": 60 }`
+  - Response: created `ScheduledJob`
+
+- `GET /v1/scheduled-jobs/:id`
+  - Response: `ScheduledJob`
+
+- `PUT /v1/scheduled-jobs/:id`
+  - Body: `{ "name"?: "...", "prompt"?: "...", "interval_minutes"?: 60, "enabled"?: true|false }`
+  - Response: updated `ScheduledJob`
+
+- `DELETE /v1/scheduled-jobs/:id`
+  - Response: `204 No Content`
+
+### Background processes
+
+- `GET /v1/processes`
+  - Response: `ProcessInfo[]`
+
+- `GET /v1/processes/:id`
+  - Response: `ProcessInfo`
+
+- `POST /v1/processes/:id/stop`
+  - Response: updated `ProcessInfo`
 
 ### Agent control
 
@@ -155,6 +188,10 @@ Pattern:
 2. WS for live events (streaming tokens, tool progress, activity).
 3. Periodic REST refresh for reconciliation.
 4. Treat WS disconnect as recoverable; reconnect with backoff.
+
+`ScheduledJob` includes: `id`, `name`, `prompt`, `interval_minutes`, `conversation_id`, `enabled`, `last_run_at`, `next_run_at`, `created_at`, `updated_at`.
+
+`ProcessInfo` includes: `id`, `command`, `working_directory`, `pid`, `status`, `exit_code`, `started_at`, `finished_at`, `recent_output`.
 
 ## Smoke validation
 

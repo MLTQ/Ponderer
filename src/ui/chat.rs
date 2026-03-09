@@ -1,6 +1,9 @@
 use eframe::egui::{self, Color32, RichText, ScrollArea};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 
 use crate::api::{ChatMessage, FrontendEvent};
@@ -67,6 +70,16 @@ struct ChatRenderPayload {
 #[derive(Default)]
 pub struct ChatMediaCache {
     image_textures: HashMap<String, egui::TextureHandle>,
+    audio_player: Option<ChatAudioPlayer>,
+    auto_played_audio_paths: HashSet<String>,
+    last_audio_error: Option<String>,
+}
+
+struct ChatAudioPlayer {
+    _stream: OutputStream,
+    handle: OutputStreamHandle,
+    sink: Option<Sink>,
+    current_path: Option<String>,
 }
 
 impl ChatMediaCache {
@@ -95,9 +108,98 @@ impl ChatMediaCache {
         self.image_textures.insert(path.to_string(), tex.clone());
         Some(tex)
     }
+
+    fn is_playing_path(&mut self, path: &str) -> bool {
+        self.refresh_audio_state();
+        self.audio_player
+            .as_ref()
+            .and_then(|player| {
+                player
+                    .sink
+                    .as_ref()
+                    .and_then(|sink| (!sink.empty()).then_some(()))
+                    .map(|_| player.current_path.as_deref() == Some(path))
+            })
+            .unwrap_or(false)
+    }
+
+    fn play_audio(&mut self, path: &str) -> Result<(), String> {
+        self.refresh_audio_state();
+        let player = self.ensure_audio_player()?;
+        let file =
+            File::open(path).map_err(|error| format!("failed to open audio file: {error}"))?;
+        let reader = BufReader::new(file);
+        let source = Decoder::new(reader)
+            .map_err(|error| format!("failed to decode audio file: {error}"))?;
+        let sink = Sink::try_new(&player.handle)
+            .map_err(|error| format!("failed to create audio output sink: {error}"))?;
+        sink.append(source);
+        sink.play();
+        player.sink = Some(sink);
+        player.current_path = Some(path.to_string());
+        self.last_audio_error = None;
+        Ok(())
+    }
+
+    fn stop_audio(&mut self) {
+        if let Some(player) = self.audio_player.as_mut() {
+            if let Some(sink) = player.sink.take() {
+                sink.stop();
+            }
+            player.current_path = None;
+        }
+    }
+
+    fn maybe_auto_play_audio(&mut self, path: &str) {
+        if self.auto_played_audio_paths.contains(path) {
+            return;
+        }
+        self.auto_played_audio_paths.insert(path.to_string());
+        if let Err(error) = self.play_audio(path) {
+            self.last_audio_error = Some(format!("Auto-play failed: {}", error));
+        }
+    }
+
+    fn consume_audio_error(&mut self) -> Option<String> {
+        self.last_audio_error.take()
+    }
+
+    fn refresh_audio_state(&mut self) {
+        if let Some(player) = self.audio_player.as_mut() {
+            let has_finished = player
+                .sink
+                .as_ref()
+                .map(|sink| sink.empty())
+                .unwrap_or(false);
+            if has_finished {
+                player.sink = None;
+                player.current_path = None;
+            }
+        }
+    }
+
+    fn ensure_audio_player(&mut self) -> Result<&mut ChatAudioPlayer, String> {
+        if self.audio_player.is_none() {
+            let (stream, handle) = OutputStream::try_default()
+                .map_err(|error| format!("failed to open default audio output: {error}"))?;
+            self.audio_player = Some(ChatAudioPlayer {
+                _stream: stream,
+                handle,
+                sink: None,
+                current_path: None,
+            });
+        }
+        self.audio_player
+            .as_mut()
+            .ok_or_else(|| "audio player unavailable".to_string())
+    }
 }
 
-pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
+pub fn render_event_log(
+    ui: &mut egui::Ui,
+    events: &[FrontendEvent],
+    detail_popup: &mut Option<String>,
+) {
     ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
         if events.is_empty() {
             ui.centered_and_justified(|ui| {
@@ -121,7 +223,7 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
         if cycle_starts.is_empty() {
             // No cycle markers yet — render flat for backwards compat.
             for (i, event) in events.iter().enumerate() {
-                render_single_event(ui, event, i);
+                render_single_event(ui, event, i, detail_popup);
             }
             return;
         }
@@ -129,7 +231,7 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
         // Render preamble events (before first CycleStart).
         let preamble_end = cycle_starts[0].0;
         for (i, event) in events[..preamble_end].iter().enumerate() {
-            render_single_event(ui, event, i);
+            render_single_event(ui, event, i, detail_popup);
         }
 
         // Render each cycle as a collapsible group; most recent open by default.
@@ -163,7 +265,7 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
             .default_open(is_last)
             .show(ui, |ui| {
                 for (ei, event) in group_events.iter().enumerate() {
-                    render_single_event(ui, event, gi * 10000 + ei);
+                    render_single_event(ui, event, gi * 10000 + ei, detail_popup);
                 }
             });
             ui.add_space(2.0);
@@ -171,10 +273,54 @@ pub fn render_event_log(ui: &mut egui::Ui, events: &[FrontendEvent]) {
     });
 }
 
-fn render_single_event(ui: &mut egui::Ui, event: &FrontendEvent, event_idx: usize) {
+/// Threshold above which an expand button is shown.
+const EXPAND_THRESHOLD: usize = 200;
+
+/// Render one line with optional text truncation + an expand button.
+/// If `full_text` exceeds `EXPAND_THRESHOLD` chars, show a truncated version
+/// followed by a small "⋯" button that populates `detail_popup`.
+fn event_line(
+    ui: &mut egui::Ui,
+    full_text: &str,
+    color: Color32,
+    detail_popup: &mut Option<String>,
+) {
+    if full_text.chars().count() > EXPAND_THRESHOLD {
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(truncate_for_ui(full_text, EXPAND_THRESHOLD))
+                        .color(color)
+                        .small(),
+                )
+                .wrap(),
+            );
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("⋯").small().weak())
+                        .frame(false)
+                        .small(),
+                )
+                .on_hover_text("View full message")
+                .clicked()
+            {
+                *detail_popup = Some(full_text.to_string());
+            }
+        });
+    } else {
+        ui.add(egui::Label::new(RichText::new(full_text).color(color).small()).wrap());
+    }
+}
+
+fn render_single_event(
+    ui: &mut egui::Ui,
+    event: &FrontendEvent,
+    event_idx: usize,
+    detail_popup: &mut Option<String>,
+) {
     match event {
         FrontendEvent::Observation(text) => {
-            ui.label(RichText::new(text).color(Color32::LIGHT_BLUE).small());
+            event_line(ui, text, Color32::LIGHT_BLUE, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::ReasoningTrace(steps) => {
@@ -195,7 +341,12 @@ fn render_single_event(ui: &mut egui::Ui, event: &FrontendEvent, event_idx: usiz
                         .id_salt((event_idx, step_idx))
                         .default_open(false)
                         .show(ui, |ui| {
-                            ui.label(RichText::new(step.as_str()).color(Color32::GRAY).small());
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(step.as_str()).color(Color32::GRAY).small(),
+                                )
+                                .wrap(),
+                            );
                         });
                     } else {
                         ui.label(
@@ -220,67 +371,72 @@ fn render_single_event(ui: &mut egui::Ui, event: &FrontendEvent, event_idx: usiz
                         .small()
                         .strong(),
                 );
-                ui.label(
-                    RichText::new(truncate_for_ui(output_preview, 80))
-                        .weak()
-                        .small(),
-                );
+                if output_preview.chars().count() > EXPAND_THRESHOLD {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(truncate_for_ui(output_preview, EXPAND_THRESHOLD))
+                                .weak()
+                                .small(),
+                        )
+                        .wrap(),
+                    );
+                    let full = format!("🛠 {}\n\n{}", tool_name, output_preview);
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("⋯").small().weak())
+                                .frame(false)
+                                .small(),
+                        )
+                        .on_hover_text("View full output")
+                        .clicked()
+                    {
+                        *detail_popup = Some(full);
+                    }
+                } else {
+                    ui.label(RichText::new(output_preview.as_str()).weak().small());
+                }
             });
             ui.add_space(2.0);
         }
         FrontendEvent::ActionTaken { action, result } => {
-            ui.label(
-                RichText::new(format!("✅ {}: {}", action, result))
-                    .color(Color32::GREEN)
-                    .small(),
-            );
+            let full = format!("✅ {}: {}", action, result);
+            event_line(ui, &full, Color32::GREEN, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::OrientationUpdate(orientation) => {
-            ui.label(
-                RichText::new(format!(
-                    "🧭 {} · {} anomalies · {} salient",
-                    orientation.disposition, orientation.anomaly_count, orientation.salience_count
-                ))
-                .color(Color32::LIGHT_YELLOW)
-                .small(),
+            let full = format!(
+                "🧭 {} · {} anomalies · {} salient",
+                orientation.disposition, orientation.anomaly_count, orientation.salience_count
             );
+            event_line(ui, &full, Color32::LIGHT_YELLOW, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::JournalWritten(summary) => {
-            ui.label(
-                RichText::new(format!("📓 {}", summary))
-                    .color(Color32::LIGHT_GREEN)
-                    .small(),
-            );
+            let full = format!("📓 {}", summary);
+            event_line(ui, &full, Color32::LIGHT_GREEN, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::ConcernCreated { id, summary } => {
-            ui.label(
-                RichText::new(format!(
-                    "🧷 [{}] {}",
-                    id.chars().take(8).collect::<String>(),
-                    summary
-                ))
-                .color(Color32::LIGHT_BLUE)
-                .small(),
+            let full = format!(
+                "🧷 [{}] {}",
+                id.chars().take(8).collect::<String>(),
+                summary
             );
+            event_line(ui, &full, Color32::LIGHT_BLUE, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::ConcernTouched { id, summary } => {
-            ui.label(
-                RichText::new(format!(
-                    "🔁 [{}] {}",
-                    id.chars().take(8).collect::<String>(),
-                    summary
-                ))
-                .color(Color32::LIGHT_YELLOW)
-                .small(),
+            let full = format!(
+                "🔁 [{}] {}",
+                id.chars().take(8).collect::<String>(),
+                summary
             );
+            event_line(ui, &full, Color32::LIGHT_YELLOW, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::Error(e) => {
-            ui.label(RichText::new(format!("❌ {}", e)).color(Color32::RED).small());
+            let full = format!("❌ {}", e);
+            event_line(ui, &full, Color32::RED, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::StateChanged(_)
@@ -299,6 +455,7 @@ pub fn render_private_chat(
     messages: &[ChatMessage],
     streaming_preview: Option<&str>,
     media_cache: &mut ChatMediaCache,
+    auto_play_generated_audio: bool,
 ) -> Option<String> {
     let mut requested_prompt_turn_id: Option<String> = None;
     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
@@ -319,8 +476,7 @@ pub fn render_private_chat(
             .stick_to_bottom(true)
             .max_height(chat_scroll_height)
             .show(ui, |ui| {
-                let has_live_preview =
-                    streaming_preview.map_or(false, |p| !p.trim().is_empty());
+                let has_live_preview = streaming_preview.map_or(false, |p| !p.trim().is_empty());
 
                 if messages.is_empty() && !has_live_preview {
                     ui.centered_and_justified(|ui| {
@@ -360,6 +516,7 @@ pub fn render_private_chat(
                                 is_operator,
                                 bubble_width,
                                 media_cache,
+                                auto_play_generated_audio,
                             );
                             if prompt_clicked {
                                 if let Some(turn_id) = msg.turn_id.as_deref() {
@@ -412,6 +569,7 @@ fn render_chat_message_bubble(
     is_operator: bool,
     max_bubble_width: f32,
     media_cache: &mut ChatMediaCache,
+    auto_play_generated_audio: bool,
 ) -> bool {
     let mut prompt_clicked = false;
     ui.group(|ui| {
@@ -463,6 +621,7 @@ fn render_chat_message_bubble(
                 &payload.media_details,
                 (inner_width - 12.0).max(80.0),
                 media_cache,
+                auto_play_generated_audio,
             );
         }
 
@@ -506,7 +665,9 @@ fn render_media_panel(
     media_details: &[ChatMediaDetail],
     max_width: f32,
     media_cache: &mut ChatMediaCache,
+    auto_play_generated_audio: bool,
 ) {
+    media_cache.refresh_audio_state();
     ui.label(RichText::new("Media").small().color(Color32::LIGHT_GREEN));
 
     for media in media_details {
@@ -543,6 +704,28 @@ fn render_media_panel(
                     }
                 }
                 "audio" => {
+                    let source = media.source.as_deref().unwrap_or_default();
+                    let is_voice_orb_audio = source.eq_ignore_ascii_case("voice-orb")
+                        || source.eq_ignore_ascii_case("voice_orb")
+                        || filename.starts_with("voice_orb_");
+
+                    if auto_play_generated_audio && is_voice_orb_audio {
+                        media_cache.maybe_auto_play_audio(&media.path);
+                    }
+
+                    ui.horizontal(|ui| {
+                        if media_cache.is_playing_path(&media.path) {
+                            if ui.button("Stop").clicked() {
+                                media_cache.stop_audio();
+                            }
+                            ui.label(RichText::new("Playing").small().weak());
+                        } else if ui.button("Play").clicked() {
+                            if let Err(error) = media_cache.play_audio(&media.path) {
+                                media_cache.last_audio_error =
+                                    Some(format!("Playback failed: {}", error));
+                            }
+                        }
+                    });
                     ui.label(RichText::new("Audio file generated").small());
                 }
                 "video" => {
@@ -551,6 +734,14 @@ fn render_media_panel(
                 _ => {
                     ui.label(RichText::new("File generated").small());
                 }
+            }
+
+            if let Some(error) = media_cache.consume_audio_error() {
+                ui.label(
+                    RichText::new(error)
+                        .small()
+                        .color(Color32::from_rgb(220, 130, 130)),
+                );
             }
         });
         ui.add_space(4.0);
@@ -626,6 +817,8 @@ fn render_tool_calls_panel(
 }
 
 fn render_streaming_preview_bubble(ui: &mut egui::Ui, preview: &str, max_bubble_width: f32) {
+    let (display_text, thoughts) = strip_inline_thinking_tags(preview);
+
     ui.group(|ui| {
         let inner_width = (max_bubble_width - 14.0).max(100.0);
         ui.set_min_width(inner_width);
@@ -643,7 +836,23 @@ fn render_streaming_preview_bubble(ui: &mut egui::Ui, preview: &str, max_bubble_
             ui.label(RichText::new("live").weak().small().italics());
         });
 
-        ui.add(egui::Label::new(force_wrap_long_tokens(preview, wrap_token_len)).wrap());
+        if !thoughts.is_empty() {
+            egui::CollapsingHeader::new(format!("Thinking ({})", thoughts.len()))
+                .id_salt("streaming_thinking")
+                .default_open(false)
+                .show(ui, |ui| {
+                    for thought in &thoughts {
+                        ui.group(|ui| {
+                            ui.monospace(force_wrap_long_tokens(thought.trim(), wrap_token_len));
+                        });
+                    }
+                });
+        }
+
+        let trimmed_display = display_text.trim();
+        if !trimmed_display.is_empty() {
+            ui.add(egui::Label::new(force_wrap_long_tokens(trimmed_display, wrap_token_len)).wrap());
+        }
     });
 }
 

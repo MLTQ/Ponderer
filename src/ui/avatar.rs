@@ -1,5 +1,5 @@
 use eframe::egui;
-use image::{AnimationDecoder, DynamicImage, GenericImageView};
+use image::AnimationDecoder;
 use std::path::Path;
 use std::time::{Duration, Instant};
 

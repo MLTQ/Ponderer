@@ -59,6 +59,32 @@ pub struct ChatTurnPrompt {
     pub system_prompt_text: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduledJob {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+    pub interval_minutes: u64,
+    pub conversation_id: String,
+    pub enabled: bool,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateScheduledJobRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_minutes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentVisualState {
@@ -84,6 +110,87 @@ pub struct AgentRuntimeStatus {
     pub visual_state: AgentVisualState,
     pub actions_this_hour: u32,
     pub last_action_time: Option<DateTime<Utc>>,
+    /// When the current visual state was entered.
+    #[serde(default)]
+    pub visual_state_since: Option<DateTime<Utc>>,
+    /// Short description of what the agent is doing right now.
+    #[serde(default)]
+    pub current_activity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginSettingsTabManifest {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub order: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendPluginKind {
+    Builtin,
+    WorkflowBundle,
+    RuntimeProcessBundle,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginSettingsFieldKind {
+    Boolean,
+    Text,
+    Multiline,
+    Number,
+    Select,
+    Path,
+    Secret,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginSettingsOptionManifest {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginSettingsFieldManifest {
+    pub key: String,
+    pub title: String,
+    pub kind: PluginSettingsFieldKind,
+    #[serde(default)]
+    pub help: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub default_value: Option<Value>,
+    #[serde(default)]
+    pub options: Vec<PluginSettingsOptionManifest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginSettingsSchemaManifest {
+    #[serde(default)]
+    pub fields: Vec<PluginSettingsFieldManifest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendPluginManifest {
+    pub id: String,
+    #[serde(default = "default_backend_plugin_kind")]
+    pub kind: BackendPluginKind,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub provided_tools: Vec<String>,
+    pub provided_skills: Vec<String>,
+    #[serde(default)]
+    pub settings_tab: Option<PluginSettingsTabManifest>,
+    #[serde(default)]
+    pub settings_schema: Option<PluginSettingsSchemaManifest>,
+}
+
+fn default_backend_plugin_kind() -> BackendPluginKind {
+    BackendPluginKind::Builtin
 }
 
 #[derive(Debug, Clone)]
@@ -224,6 +331,17 @@ impl ApiClient {
             .context("Failed to decode updated config")
     }
 
+    pub async fn list_plugins(&self) -> Result<Vec<BackendPluginManifest>> {
+        self.request(reqwest::Method::GET, "/v1/plugins")
+            .send()
+            .await?
+            .error_for_status()
+            .context("GET /v1/plugins failed")?
+            .json::<Vec<BackendPluginManifest>>()
+            .await
+            .context("Failed to decode plugin manifest list")
+    }
+
     pub async fn list_conversations(&self, limit: usize) -> Result<Vec<ChatConversation>> {
         let response = self
             .request(reqwest::Method::GET, "/v1/conversations")
@@ -258,6 +376,41 @@ impl ApiClient {
             .json::<ChatConversation>()
             .await
             .context("Failed to decode created conversation")
+    }
+
+    pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.request(
+            reqwest::Method::DELETE,
+            &format!("/v1/conversations/{}", conversation_id),
+        )
+        .send()
+        .await?
+        .error_for_status()
+        .with_context(|| format!("DELETE /v1/conversations/{} failed", conversation_id))?;
+        Ok(())
+    }
+
+    pub async fn update_conversation_title(
+        &self,
+        conversation_id: &str,
+        title: &str,
+    ) -> Result<ChatConversation> {
+        #[derive(Serialize)]
+        struct UpdateConversationRequest<'a> {
+            title: &'a str,
+        }
+        self.request(
+            reqwest::Method::PATCH,
+            &format!("/v1/conversations/{}", conversation_id),
+        )
+        .json(&UpdateConversationRequest { title })
+        .send()
+        .await?
+        .error_for_status()
+        .with_context(|| format!("PATCH /v1/conversations/{} failed", conversation_id))?
+        .json::<ChatConversation>()
+        .await
+        .context("Failed to decode updated conversation")
     }
 
     pub async fn list_messages(
@@ -321,6 +474,77 @@ impl ApiClient {
             prompt_text: response.prompt_text,
             system_prompt_text: response.system_prompt_text,
         })
+    }
+
+    pub async fn list_scheduled_jobs(&self, limit: usize) -> Result<Vec<ScheduledJob>> {
+        self.request(reqwest::Method::GET, "/v1/scheduled-jobs")
+            .query(&[("limit", limit)])
+            .send()
+            .await?
+            .error_for_status()
+            .context("GET /v1/scheduled-jobs failed")?
+            .json::<Vec<ScheduledJob>>()
+            .await
+            .context("Failed to decode scheduled jobs")
+    }
+
+    pub async fn create_scheduled_job(
+        &self,
+        name: &str,
+        prompt: &str,
+        interval_minutes: u64,
+    ) -> Result<ScheduledJob> {
+        #[derive(Serialize)]
+        struct CreateScheduledJobRequest<'a> {
+            name: &'a str,
+            prompt: &'a str,
+            interval_minutes: u64,
+        }
+
+        self.request(reqwest::Method::POST, "/v1/scheduled-jobs")
+            .json(&CreateScheduledJobRequest {
+                name,
+                prompt,
+                interval_minutes,
+            })
+            .send()
+            .await?
+            .error_for_status()
+            .context("POST /v1/scheduled-jobs failed")?
+            .json::<ScheduledJob>()
+            .await
+            .context("Failed to decode created scheduled job")
+    }
+
+    pub async fn update_scheduled_job(
+        &self,
+        job_id: &str,
+        request: &UpdateScheduledJobRequest,
+    ) -> Result<ScheduledJob> {
+        self.request(
+            reqwest::Method::PUT,
+            &format!("/v1/scheduled-jobs/{}", job_id),
+        )
+        .json(request)
+        .send()
+        .await?
+        .error_for_status()
+        .with_context(|| format!("PUT /v1/scheduled-jobs/{} failed", job_id))?
+        .json::<ScheduledJob>()
+        .await
+        .context("Failed to decode updated scheduled job")
+    }
+
+    pub async fn delete_scheduled_job(&self, job_id: &str) -> Result<()> {
+        self.request(
+            reqwest::Method::DELETE,
+            &format!("/v1/scheduled-jobs/{}", job_id),
+        )
+        .send()
+        .await?
+        .error_for_status()
+        .with_context(|| format!("DELETE /v1/scheduled-jobs/{} failed", job_id))?;
+        Ok(())
     }
 
     pub async fn get_agent_status(&self) -> Result<AgentRuntimeStatus> {

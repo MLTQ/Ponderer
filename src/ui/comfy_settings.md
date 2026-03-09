@@ -6,19 +6,15 @@ Implements the ComfyUI Workflow panel, allowing users to import workflows from P
 ## Components
 
 ### `ComfySettingsPanel`
-- **Does**: Holds the loaded `ComfyWorkflow`, visibility flag, cached preview texture, import error, and test connection status
+- **Does**: Holds the loaded `ComfyWorkflow`, cached preview texture, import error, and test connection status
 - **Interacts with**: `ComfyWorkflow`/`ControllableInput`/`InputType` from `crate::comfy_workflow`, `AgentConfig` from `crate::config`
 
 ### `ComfySettingsPanel::new()`
-- **Does**: Constructs with no workflow loaded and panel hidden
+- **Does**: Constructs with no workflow loaded
 
-### `ComfySettingsPanel::render(ctx, config) -> bool`
-- **Does**: Draws the workflow settings window. Returns `true` when the user saves (triggering config persistence in `app.rs`). Sections include:
-  - **Import**: Browse buttons for PNG and JSON files via `rfd::FileDialog`
-  - **Current Workflow**: Preview image (128x128), name, output node ID, controllable node count
-  - **Controllable Inputs**: Per-node list of inputs with checkboxes to toggle `agent_modifiable`, showing current values by type (Text, Int, Seed, Float, Bool)
-  - **Actions**: Test Workflow, Save, Cancel buttons
-- **Interacts with**: `AgentConfig` (mutated on save), `ComfyWorkflow` fields
+### `ComfySettingsPanel::render_contents(ui, ctx, config) -> bool`
+- **Does**: Renders the same workflow-management UI inline so it can live inside a tab in the main settings window.
+- **Interacts with**: `ui/settings.rs` tab renderer and the current workflow/config state.
 
 ### `ComfySettingsPanel::import_workflow_png(path)`
 - **Does**: Loads a workflow from an embedded PNG via `ComfyWorkflow::from_png`, sets workflow name from filename
@@ -32,7 +28,7 @@ Implements the ComfyUI Workflow panel, allowing users to import workflows from P
 - **Does**: Creates a `ComfyUIClient` and calls `test_connection()` synchronously via a temporary tokio runtime. Updates `test_status` with success/failure.
 - **Interacts with**: `crate::comfy_client::ComfyUIClient`
 
-### `ComfySettingsPanel::save_workflow_to_config(config)`
+### `ComfySettingsPanel::sync_workflow_to_config(config)`
 - **Does**: Serializes the current `ComfyWorkflow` to JSON and writes it to `config.workflow_settings`. Also copies `preview_image_path` to `config.workflow_path`.
 - **Interacts with**: `serde_json`, `AgentConfig` fields `workflow_settings`, `workflow_path`
 
@@ -44,7 +40,7 @@ Implements the ComfyUI Workflow panel, allowing users to import workflows from P
 
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
-| `app.rs` | `render(ctx, &mut config) -> bool`; `load_workflow_from_config(&config)` | Changing signatures breaks app integration |
+| `settings.rs` | `render_contents(ui, ctx, &mut config) -> bool`; `load_workflow_from_config(&config)` | Changing signatures breaks settings integration |
 | `AgentConfig` | Fields: `workflow_settings` (Option<String>), `workflow_path` (Option<String>), `enable_image_generation`, `comfyui.api_url` | Renaming these fields breaks this panel |
 | `ComfyWorkflow` | `from_png`, `from_json_file`, `Serialize`/`Deserialize`, fields: `name`, `output_node_id`, `controllable_nodes`, `preview_image_path` | Changing workflow struct breaks import/save |
 | `ComfyUIClient` | `new(url)`, `test_connection() -> async Result` | Changing client API breaks test button |
