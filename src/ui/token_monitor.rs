@@ -15,6 +15,7 @@ pub struct TokenMonitorState {
     current_direction: Vec3,
     sample_index: u64,
     last_novelty: f32,
+    zoom: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +41,7 @@ impl TokenMonitorState {
             current_direction: Vec3::new(0.22, 0.34, 0.91).normalized(),
             sample_index: 0,
             last_novelty: 0.0,
+            zoom: 1.0,
         }
     }
 
@@ -156,39 +158,34 @@ impl std::ops::Mul<f32> for Vec3 {
     }
 }
 
-pub fn render(ui: &mut egui::Ui, state: &TokenMonitorState) {
+pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
     let desired_size = egui::vec2(ui.available_width().max(180.0), 220.0);
-    let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
 
     painter.rect_filled(rect, 10.0, Color32::BLACK);
-    draw_backdrop(&painter, rect);
+    if response.hovered() {
+        let scroll_delta = ui.ctx().input(|input| input.raw_scroll_delta.y);
+        if scroll_delta.abs() > f32::EPSILON {
+            let zoom_factor = (1.0 + scroll_delta * 0.0015).clamp(0.85, 1.15);
+            state.zoom = (state.zoom * zoom_factor).clamp(0.55, 2.8);
+        }
+    }
 
     let time = ui.ctx().input(|input| input.time) as f32;
     let yaw = time * 0.22;
     let pitch = 0.48 + 0.09 * (time * 0.31).sin();
-    let sphere_radius = rect.width().min(rect.height()) * 0.34;
+    let sphere_radius = rect.width().min(rect.height()) * 0.34 * state.zoom;
     let center = rect.center();
 
     draw_wireframe_sphere(&painter, rect, center, sphere_radius, yaw, pitch);
     draw_origin(&painter, center);
     draw_trace(&painter, rect, center, sphere_radius, yaw, pitch, state);
 
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
+    }
     ui.ctx().request_repaint();
-}
-
-fn draw_backdrop(painter: &egui::Painter, rect: Rect) {
-    let top = Rgba::from_rgb(0.01, 0.05, 0.03);
-    let bottom = Rgba::from_rgb(0.0, 0.0, 0.0);
-    let mut mesh = egui::epaint::Mesh::default();
-    let base = mesh.vertices.len() as u32;
-    mesh.colored_vertex(rect.left_top(), Color32::from(top));
-    mesh.colored_vertex(rect.right_top(), Color32::from(top));
-    mesh.colored_vertex(rect.right_bottom(), Color32::from(bottom));
-    mesh.colored_vertex(rect.left_bottom(), Color32::from(bottom));
-    mesh.add_triangle(base, base + 1, base + 2);
-    mesh.add_triangle(base, base + 2, base + 3);
-    painter.add(egui::Shape::mesh(mesh));
 }
 
 fn draw_origin(painter: &egui::Painter, center: Pos2) {

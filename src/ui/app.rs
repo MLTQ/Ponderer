@@ -765,7 +765,7 @@ impl eframe::App for AgentApp {
                     .id_salt("live_stream_header")
                     .default_open(true)
                     .show(ui, |ui| {
-                        super::token_monitor::render(ui, &self.token_monitor);
+                        super::token_monitor::render(ui, &mut self.token_monitor);
                         ui.add_space(6.0);
                         ui.horizontal_wrapped(|ui| {
                             let intensity = self.token_monitor.last_novelty().clamp(0.0, 1.25);
