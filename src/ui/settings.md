@@ -32,7 +32,7 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 ### Core tab renderers
 - **Does**: Render grouped core settings tabs: `General`, `Behavior`, `Living Loop`, `Memory`, `System`, and `Schedules`.
 - **Interacts with**: top-level `AgentConfig` fields.
-- **Notes**: Behavior tab includes private-chat mode selector (`agentic` multi-turn vs `direct` single-turn) in addition to autonomous loop limits.
+- **Notes**: Behavior tab focuses on autonomous loop limits and loop-heat controls; the stale private-chat mode selector was removed after the config field disappeared.
 
 ### `render_schedules_tab`
 - **Does**: Shows all schedules, lets operators edit enabled/name/prompt/interval, and supports add/delete/manual refresh.

@@ -6,7 +6,7 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 ## Components
 
 ### `AgentApp`
-- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character panels, `pending_approvals` for approval popups, and mind-state fields: `last_orientation`, `last_action`, `last_journal`, `live_stream_text` (live LLM token stream, any conversation).
+- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character panels, `pending_approvals` for approval popups, and mind-state fields: `last_orientation`, `last_action`, `last_journal`, `live_stream_text` (live LLM token stream, any conversation), plus the rolling `token_monitor` trace state.
 - **Interacts with**: `crate::api::{ApiClient, FrontendEvent, ChatConversation, ChatMessage, AgentVisualState, OrientationSummary}`, UI subpanels.
 
 ### `AgentApp::new(api_client, fallback_config)`
@@ -52,7 +52,7 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - **Does**: Formats each live tool-progress entry as a colored tool-name badge (color by category: shell=amber, files=blue, http=purple, memory=green, comfy=orange, vision=pink) + truncated monospace output.
 
 ### Sidebar — three zones
-- **Does**: The right panel ("🧠 Mind") is divided into three zones: (1) mind-state group (orientation, last action, last journal), (2) "💭 Live Stream" collapsible section showing the last 600 chars of the active LLM token stream, (3) grouped turn-history log via `render_event_log`.
+- **Does**: The right panel ("🧠 Mind") is divided into three zones: (1) mind-state group (orientation, last action, last journal), (2) "💭 Live Stream" collapsible section showing a rotating wireframe token monitor plus the last 600 chars of the active LLM token stream, (3) grouped turn-history log via `render_event_log`.
 
 ### `truncate_str` / `last_n_chars`
 - **Does**: Local helpers for display truncation. `truncate_str` adds `…` at max_chars; `last_n_chars` returns the trailing N chars of a string.
@@ -65,6 +65,7 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - The app is no longer wired to in-process `Agent`/`AgentDatabase`/`flume` backend channels.
 - WS event stream runs continuously with reconnect; polling refresh every 2s is retained for list/history/status consistency.
 - Activity panel is now visible by default so autonomous progress and wake/error telemetry are immediately visible without extra clicks.
+- `FrontendEvent::TokenMetrics` is consumed directly by `AgentApp` and not pushed into the activity log, since the wireframe monitor is the primary presentation for those samples.
 - Main chat surface now uses fixed vertical regions (chat history, live tool output, composer) to prevent tool/output panels from overlapping chat bubbles or pushing the composer off-screen.
 - UI-level API failures are surfaced in the activity log as `FrontendEvent::Error` entries.
 - Prompt inspector windows are opened on demand from agent message rows and support toggling system-prompt visibility plus translucent source highlights over prompt sections.

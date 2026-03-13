@@ -15,6 +15,7 @@ Module declaration file for the `ui` crate. Re-exports all UI submodules that co
 - **`character`**: Character card import and editing panel
 - **`comfy_settings`**: ComfyUI workflow import and configuration panel
 - **`orbweaver_settings`**: OrbWeaver / Graphchan configuration panel
+- **`token_monitor`**: Live wireframe sphere renderer for token novelty traces
 
 ## Contracts
 
