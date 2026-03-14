@@ -1,4 +1,4 @@
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Rgba, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Id, Pos2, Rect, Rgba, Stroke, Vec2};
 
 use crate::api::TokenMetricSample;
 
@@ -21,6 +21,10 @@ pub struct TokenMonitorState {
     pitch_offset: f32,
     rotation_velocity: Vec2,
     drag_accum: Vec2,
+    auto_yaw: f32,
+    auto_pitch_phase: f32,
+    last_frame_time: Option<f64>,
+    auto_rotate_resume_at: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +68,10 @@ impl TokenMonitorState {
             pitch_offset: 0.0,
             rotation_velocity: Vec2::ZERO,
             drag_accum: Vec2::ZERO,
+            auto_yaw: 0.0,
+            auto_pitch_phase: 0.0,
+            last_frame_time: None,
+            auto_rotate_resume_at: 0.0,
         }
     }
 
@@ -141,6 +149,7 @@ impl TokenMonitorState {
         self.pitch_offset = 0.0;
         self.rotation_velocity = Vec2::ZERO;
         self.drag_accum = Vec2::ZERO;
+        self.auto_rotate_resume_at = 0.0;
     }
 }
 
@@ -199,6 +208,12 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     let hovered = response.hovered();
+    let time = ui.ctx().input(|input| input.time);
+    let delta_time = state
+        .last_frame_time
+        .map(|previous| (time - previous).clamp(0.0, 0.05) as f32)
+        .unwrap_or(1.0 / 60.0);
+    state.last_frame_time = Some(time);
 
     painter.rect_filled(rect, 10.0, Color32::BLACK);
     if response.double_clicked() {
@@ -216,6 +231,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
     if response.drag_started() {
         state.drag_accum = Vec2::ZERO;
         state.rotation_velocity = Vec2::ZERO;
+        state.auto_rotate_resume_at = time + 5.0;
     }
     if response.dragged() {
         let delta = response.drag_delta() - state.drag_accum;
@@ -223,6 +239,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
         state.yaw_offset += delta.x * 0.012;
         state.pitch_offset = (state.pitch_offset + delta.y * 0.01).clamp(-1.1, 1.1);
         state.rotation_velocity = delta * 0.0015;
+        state.auto_rotate_resume_at = time + 5.0;
     } else {
         state.drag_accum = Vec2::ZERO;
         state.yaw_offset += state.rotation_velocity.x;
@@ -234,9 +251,13 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
     }
     state.zoom += (state.target_zoom - state.zoom) * 0.18;
 
-    let time = ui.ctx().input(|input| input.time) as f32;
-    let yaw = time * 0.22 + state.yaw_offset;
-    let pitch = (0.48 + 0.09 * (time * 0.31).sin() + state.pitch_offset).clamp(-1.1, 1.1);
+    if time >= state.auto_rotate_resume_at {
+        state.auto_yaw += delta_time * 0.22;
+        state.auto_pitch_phase += delta_time * 0.31;
+    }
+    let yaw = state.auto_yaw + state.yaw_offset;
+    let pitch =
+        (0.48 + 0.09 * state.auto_pitch_phase.sin() + state.pitch_offset).clamp(-1.1, 1.1);
     let sphere_radius = rect.width().min(rect.height()) * 0.34 * state.zoom;
     let center = rect.center();
 
@@ -257,7 +278,11 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
     );
     if let Some(hit) = hover_hit {
         draw_hover_marker(&painter, hit.screen_pos);
-        response.clone().on_hover_ui_at_pointer(|ui| {
+        egui::show_tooltip_at_pointer(
+            ui.ctx(),
+            ui.layer_id(),
+            Id::new(("token_monitor_tooltip", hit.index)),
+            |ui| {
             ui.label(format!("Token: {}", render_token_label(&hit.point.token)));
             ui.label(format!("Step: #{}", hit.index + 1));
             ui.label(format!("Novelty: {:.3}", hit.point.novelty));
@@ -269,7 +294,8 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
             if let Some(entropy) = hit.point.entropy {
                 ui.label(format!("Entropy: {:.3}", entropy));
             }
-        });
+            },
+        );
     }
 
     if response.dragged() {

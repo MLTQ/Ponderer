@@ -6,7 +6,7 @@ Renders the live token-status monitor in the Mind sidebar. It turns streamed tok
 ## Components
 
 ### `TokenMonitorState`
-- **Does**: Stores the active conversation trace, current 3D position/direction, sample counter, latest novelty value, and local interaction state for zoom/orbit inertia.
+- **Does**: Stores the active conversation trace, current 3D position/direction, sample counter, latest novelty value, and local interaction state for zoom/orbit inertia plus autorotation cooldown timing.
 - **Interacts with**: `ui/app.rs` event handling for `FrontendEvent::TokenMetrics`.
 
 ### `TokenMonitorState::ingest`
@@ -14,7 +14,7 @@ Renders the live token-status monitor in the Mind sidebar. It turns streamed tok
 - **Interacts with**: backend token metric batches decoded in `api.rs`.
 
 ### `render(ui, state)`
-- **Does**: Draws the pure-black backdrop, pale-green wireframe sphere, center marker, and the colored token trail. While hovered, mouse-wheel scroll adjusts zoom, drag orbits the view, double-click resets the view, hover guides appear, and the nearest step can show a token tooltip.
+- **Does**: Draws the pure-black backdrop, pale-green wireframe sphere, center marker, and the colored token trail. While hovered, mouse-wheel scroll adjusts zoom, drag orbits the view, double-click resets the view, hover guides appear, and the nearest step shows a pointer tooltip. Autorotation pauses during interaction and resumes after a 5-second idle cooldown.
 - **Interacts with**: egui painter API and `TokenMonitorState`.
 
 ### Trace helpers (`push_sample`, `hashed_direction`, `rotate`, `project`)
@@ -36,4 +36,4 @@ Renders the live token-status monitor in the Mind sidebar. It turns streamed tok
 - The walk is deterministic per token text + sample index, so similar replies create similar knot shapes.
 - A mild center pull keeps boring runs near the origin while still letting higher-novelty segments escape beyond the unit sphere.
 - The sphere is decorative but data-driven: color shifts from green toward red as the trail moves farther from the center.
-- Zoom and manual orbit offsets are local UI state on `TokenMonitorState`, so interaction changes the view without disturbing the underlying trace.
+- Zoom, manual orbit offsets, and autorotation cooldown are local UI state on `TokenMonitorState`, so interaction changes the view without disturbing the underlying trace.
