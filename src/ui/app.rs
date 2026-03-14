@@ -4,6 +4,7 @@ use flume::Receiver;
 use super::avatar::AvatarSet;
 use super::character::CharacterPanel;
 use super::settings::{ScheduledJobAction, SettingsPanel};
+use super::token_monitor::TokenMonitorState;
 use crate::api::{
     AgentVisualState, ApiClient, ChatConversation, ChatMessage, ChatTurnPhase, FrontendEvent,
     OrientationSummary, UpdateScheduledJobRequest, DEFAULT_CHAT_CONVERSATION_ID,
@@ -42,6 +43,8 @@ pub struct AgentApp {
     last_journal: Option<String>,
     /// Latest live LLM token stream content (any conversation, any cycle).
     live_stream_text: Option<String>,
+    /// Rolling live token-novelty monitor rendered in the Mind panel.
+    token_monitor: TokenMonitorState,
     /// Timestamp when the current visual state was entered (from AgentRuntimeStatus).
     visual_state_since: Option<chrono::DateTime<chrono::Utc>>,
     /// Short description of what the agent is currently doing (from AgentRuntimeStatus).
@@ -137,6 +140,7 @@ impl AgentApp {
             last_action: None,
             last_journal: None,
             live_stream_text: None,
+            token_monitor: TokenMonitorState::new(),
             visual_state_since: None,
             current_activity: None,
             confirm_delete_conversation_id: None,
@@ -603,6 +607,14 @@ impl eframe::App for AgentApp {
                     }
                     continue;
                 }
+                FrontendEvent::TokenMetrics {
+                    conversation_id,
+                    clear,
+                    samples,
+                } => {
+                    self.token_monitor.ingest(conversation_id, *clear, samples);
+                    continue;
+                }
                 FrontendEvent::ToolCallProgress {
                     conversation_id,
                     tool_name,
@@ -753,6 +765,34 @@ impl eframe::App for AgentApp {
                     .id_salt("live_stream_header")
                     .default_open(true)
                     .show(ui, |ui| {
+                        super::token_monitor::render(ui, &mut self.token_monitor);
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            let intensity = self.token_monitor.last_novelty().clamp(0.0, 1.25);
+                            let descriptor = if intensity > 0.95 {
+                                "wild"
+                            } else if intensity > 0.65 {
+                                "exploring"
+                            } else if intensity > 0.35 {
+                                "steady"
+                            } else {
+                                "grounded"
+                            };
+                            ui.label(
+                                egui::RichText::new(format!("Trace: {}", descriptor))
+                                    .small()
+                                    .color(egui::Color32::from_rgb(170, 255, 190)),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "· {} steps",
+                                    self.token_monitor.trace_len()
+                                ))
+                                .small()
+                                .weak(),
+                            );
+                        });
+                        ui.add_space(4.0);
                         egui::ScrollArea::vertical()
                             .max_height(110.0)
                             .stick_to_bottom(true)

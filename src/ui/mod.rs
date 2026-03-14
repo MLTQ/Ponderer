@@ -7,3 +7,4 @@ pub mod orbweaver_settings;
 pub mod plugin_settings_form;
 pub mod settings;
 pub mod sprite;
+pub mod token_monitor;

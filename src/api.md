@@ -32,8 +32,12 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - **Notes**: `BackendPluginKind` accepts built-ins, Comfy workflow bundles, and subprocess runtime bundles so optional plugin tabs do not disappear when new plugin types are added.
 
 ### `FrontendEvent`
-- **Does**: Normalized UI event stream derived from backend WS envelopes. Includes `ApprovalRequest { tool_name, reason }` for interactive approval popups, and `CycleStart { label }` used by `chat.rs` to group the turn-history log into collapsible cycle groups.
-- **Interacts with**: `ui/chat.rs` activity log and `ui/app.rs` streaming preview/tool-progress state, approval popup, and mind-state tracking fields.
+- **Does**: Normalized UI event stream derived from backend WS envelopes. Includes `ApprovalRequest { tool_name, reason }` for interactive approval popups, `TokenMetrics { conversation_id, clear, samples }` for the live token monitor, and `CycleStart { label }` used by `chat.rs` to group the turn-history log into collapsible cycle groups.
+- **Interacts with**: `ui/chat.rs` activity log and `ui/app.rs` streaming preview/tool-progress state, approval popup, token-monitor state, and mind-state tracking fields.
+
+### `TokenMetricSample`
+- **Does**: Carries a single live token-novelty sample (`text`, optional `logprob`/`entropy`, and derived `novelty`) from the backend WS stream.
+- **Interacts with**: `ui/token_monitor.rs` and `ui/app.rs`.
 
 ### `ApiClient::approve_tool`
 - **Does**: `POST /v1/agent/tools/:tool_name/approve` — grants session-level approval so the named tool can run autonomously without further prompts.
@@ -66,3 +70,4 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - Enum decoding for chat/runtime state is compatibility-tolerant (`snake_case` plus legacy PascalCase aliases) to survive backend/frontend schema drift during upgrades.
 - Conversation list decode errors now include payload preview context to simplify diagnosing response-shape mismatches.
 - `ApiClient::get_turn_prompt` fetches `/v1/turns/:id/prompt` for per-message “View Prompt” inspection (context prompt + optional stored system prompt).
+- WS event mapping now includes `token_metrics`, which is ignored by the activity log but consumed by the live token monitor in the Mind sidebar.

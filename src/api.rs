@@ -200,6 +200,14 @@ pub struct OrientationSummary {
     pub salience_count: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenMetricSample {
+    pub text: String,
+    pub logprob: Option<f32>,
+    pub entropy: Option<f32>,
+    pub novelty: f32,
+}
+
 #[derive(Debug, Clone)]
 pub enum FrontendEvent {
     StateChanged(AgentVisualState),
@@ -214,6 +222,11 @@ pub enum FrontendEvent {
         conversation_id: String,
         content: String,
         done: bool,
+    },
+    TokenMetrics {
+        conversation_id: String,
+        clear: bool,
+        samples: Vec<TokenMetricSample>,
     },
     ActionTaken {
         action: String,
@@ -736,6 +749,25 @@ fn map_event(envelope: ApiEventEnvelope) -> Option<FrontendEvent> {
                 .get("done")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+        }),
+        "token_metrics" => Some(FrontendEvent::TokenMetrics {
+            conversation_id: envelope
+                .payload
+                .get("conversation_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            clear: envelope
+                .payload
+                .get("clear")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            samples: envelope
+                .payload
+                .get("samples")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_default(),
         }),
         "action_taken" => Some(FrontendEvent::ActionTaken {
             action: envelope
