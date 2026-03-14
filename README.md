@@ -1,4 +1,9 @@
 # Ponderer
+Ponderer is a pedagogical project to better understand and facilitate agentic systems. 
+Ponderer is not a coding agent. Ponderer is a buddy. 
+I believe in Universal Basic Digimon, and this is a first cut at such a system. 
+It is meant to chat with you. Take actions. Have personal desires and thoughts. Take actions on its own behalf.
+It isn't supposed to be a tool. Its supposed to be your little buddy.
 
 ## Plugin System
 
