@@ -287,14 +287,11 @@ fn event_line(
 ) {
     if full_text.chars().count() > EXPAND_THRESHOLD {
         ui.horizontal_wrapped(|ui| {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(truncate_for_ui(full_text, EXPAND_THRESHOLD))
-                        .color(color)
-                        .small(),
-                )
-                .wrap(),
+            let wrapped = wrap_text_for_ui_width(
+                &truncate_for_ui(full_text, EXPAND_THRESHOLD),
+                ui.available_width(),
             );
+            ui.add(egui::Label::new(RichText::new(wrapped).color(color).small()).wrap());
             if ui
                 .add(
                     egui::Button::new(RichText::new("⋯").small().weak())
@@ -308,7 +305,8 @@ fn event_line(
             }
         });
     } else {
-        ui.add(egui::Label::new(RichText::new(full_text).color(color).small()).wrap());
+        let wrapped = wrap_text_for_ui_width(full_text, ui.available_width());
+        ui.add(egui::Label::new(RichText::new(wrapped).color(color).small()).wrap());
     }
 }
 
@@ -372,14 +370,11 @@ fn render_single_event(
                         .strong(),
                 );
                 if output_preview.chars().count() > EXPAND_THRESHOLD {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(truncate_for_ui(output_preview, EXPAND_THRESHOLD))
-                                .weak()
-                                .small(),
-                        )
-                        .wrap(),
+                    let wrapped = wrap_text_for_ui_width(
+                        &truncate_for_ui(output_preview, EXPAND_THRESHOLD),
+                        ui.available_width(),
                     );
+                    ui.add(egui::Label::new(RichText::new(wrapped).weak().small()).wrap());
                     let full = format!("🛠 {}\n\n{}", tool_name, output_preview);
                     if ui
                         .add(
@@ -393,7 +388,8 @@ fn render_single_event(
                         *detail_popup = Some(full);
                     }
                 } else {
-                    ui.label(RichText::new(output_preview.as_str()).weak().small());
+                    let wrapped = wrap_text_for_ui_width(output_preview, ui.available_width());
+                    ui.add(egui::Label::new(RichText::new(wrapped).weak().small()).wrap());
                 }
             });
             ui.add_space(2.0);
@@ -852,7 +848,9 @@ fn render_streaming_preview_bubble(ui: &mut egui::Ui, preview: &str, max_bubble_
 
         let trimmed_display = display_text.trim();
         if !trimmed_display.is_empty() {
-            ui.add(egui::Label::new(force_wrap_long_tokens(trimmed_display, wrap_token_len)).wrap());
+            ui.add(
+                egui::Label::new(force_wrap_long_tokens(trimmed_display, wrap_token_len)).wrap(),
+            );
         }
     });
 }
@@ -885,6 +883,10 @@ fn render_turn_control_separator(ui: &mut egui::Ui, detail: &ChatTurnControlDeta
 fn max_token_len_for_width(width: f32) -> usize {
     // Rough monospace-ish estimate to keep long unbroken tokens from expanding bubbles.
     ((width / 7.5).floor() as usize).clamp(20, 140)
+}
+
+fn wrap_text_for_ui_width(input: &str, width: f32) -> String {
+    force_wrap_long_tokens(input, max_token_len_for_width(width.max(120.0)))
 }
 
 fn force_wrap_long_tokens(input: &str, max_token_len: usize) -> String {

@@ -10,7 +10,7 @@ Renders the activity log and private chat stream for the API-only frontend. Supp
 - **Interacts with**: `crate::api::FrontendEvent`.
 
 ### `render_single_event(ui, event, idx)`
-- **Does**: Renders one `FrontendEvent` with appropriate color, icon, and size. Uses `id_salt(idx)` for stable CollapsingHeader state. Tool progress shows tool name as a colored badge + truncated output inline. All non-visible variants (`StateChanged`, `ChatStreaming`, `TokenMetrics`, `ApprovalRequest`, `CycleStart`) are no-ops here.
+- **Does**: Renders one `FrontendEvent` with appropriate color, icon, and size. Uses `id_salt(idx)` for stable CollapsingHeader state. Tool progress shows tool name as a colored badge + truncated output inline, and force-wraps long URLs/tokens so the Mind sidebar stays bounded. All non-visible variants (`StateChanged`, `ChatStreaming`, `TokenMetrics`, `ApprovalRequest`, `CycleStart`) are no-ops here.
 
 ### `render_private_chat(ui, messages, streaming_preview, media_cache, auto_play_generated_audio) -> Option<String>`
 - **Does**: Renders chat bubbles from `ChatMessage` records, including right-aligned operator rows, per-agent-message `View Prompt` controls (when `turn_id` exists), processing hints, metadata expanders, and inline media cards. Audio media cards now include in-chat `Play` / `Stop` controls and optional auto-play for newly generated Voice-Orb clips when enabled via plugin settings. Returns requested `turn_id` when the operator clicks a prompt-inspection button.
@@ -34,6 +34,7 @@ Renders the activity log and private chat stream for the API-only frontend. Supp
 ## Notes
 - Thinking and tool-call expanders render below bubbles in full-width rows for readability.
 - Long unbroken tokens are force-wrapped to keep message content visible in narrow windows.
+- Event-log one-liners and tool-progress previews reuse that same long-token wrapping so browser URLs do not widen the sidebar.
 - Streaming preview displays raw in-flight text until backend persists final response.
 - Message rows use auto-height layout primitives (no fixed zero-height row allocations) to prevent bubble overlap/pileups when the pane is bottom-stuck.
 - Chat content is rendered in a dedicated top-down layout scope so it is not affected by the parent composer's bottom-up anchoring.

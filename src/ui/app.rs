@@ -460,10 +460,10 @@ impl AgentApp {
     }
 
     fn rename_conversation(&mut self, conversation_id: &str, title: &str) {
-        match self
-            .runtime
-            .block_on(self.api_client.update_conversation_title(conversation_id, title))
-        {
+        match self.runtime.block_on(
+            self.api_client
+                .update_conversation_title(conversation_id, title),
+        ) {
             Ok(_) => {
                 self.refresh_conversations();
             }
@@ -671,8 +671,9 @@ impl eframe::App for AgentApp {
                             format!("! Approval needed: {}", tool_name),
                         );
                         ui.add_space(2.0);
+                        let wrapped_reason = wrap_text_for_ui_width(reason, ui.available_width());
                         ui.add(
-                            egui::Label::new(egui::RichText::new(reason.as_str()).small()).wrap(),
+                            egui::Label::new(egui::RichText::new(wrapped_reason).small()).wrap(),
                         );
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
@@ -721,25 +722,32 @@ impl eframe::App for AgentApp {
                         });
                     }
                     if let Some(ref action) = self.last_action {
+                        let wrapped = wrap_text_for_ui_width(
+                            &format!("⚡ {}", truncate_str(action, 80)),
+                            ui.available_width(),
+                        );
                         ui.label(
-                            egui::RichText::new(format!("⚡ {}", truncate_str(action, 80)))
+                            egui::RichText::new(wrapped)
                                 .small()
                                 .color(egui::Color32::LIGHT_GREEN),
                         );
                     }
                     if let Some(ref journal) = self.last_journal {
-                        ui.label(
-                            egui::RichText::new(format!("📓 {}", truncate_str(journal, 80)))
-                                .small()
-                                .weak()
-                                .italics(),
+                        let wrapped = wrap_text_for_ui_width(
+                            &format!("📓 {}", truncate_str(journal, 80)),
+                            ui.available_width(),
                         );
+                        ui.label(egui::RichText::new(wrapped).small().weak().italics());
                     }
                     // Show current activity while working (e.g. "Requesting LLM...").
                     // This makes it visible what the agent is waiting on when the GPU is idle.
                     if let Some(ref activity) = self.current_activity.clone() {
+                        let wrapped = wrap_text_for_ui_width(
+                            &format!("⏳ {}", truncate_str(activity, 90)),
+                            ui.available_width(),
+                        );
                         ui.label(
-                            egui::RichText::new(format!("⏳ {}", truncate_str(activity, 90)))
+                            egui::RichText::new(wrapped)
                                 .small()
                                 .color(egui::Color32::LIGHT_BLUE),
                         );
@@ -800,9 +808,11 @@ impl eframe::App for AgentApp {
                             .show(ui, |ui| {
                                 if let Some(ref text) = self.live_stream_text {
                                     let preview = last_n_chars(text, 600);
+                                    let wrapped =
+                                        wrap_text_for_ui_width(&preview, ui.available_width());
                                     ui.add(
                                         egui::Label::new(
-                                            egui::RichText::new(preview)
+                                            egui::RichText::new(wrapped)
                                                 .small()
                                                 .color(egui::Color32::from_gray(200)),
                                         )
@@ -1351,9 +1361,10 @@ fn render_live_tool_entry(ui: &mut egui::Ui, entry: &LiveToolProgress) {
             );
         }
         let output = truncate_str(&entry.output_preview, 200);
+        let wrapped_output = wrap_text_for_ui_width(&output, ui.available_width());
         ui.add(
             egui::Label::new(
-                egui::RichText::new(output)
+                egui::RichText::new(wrapped_output)
                     .small()
                     .color(egui::Color32::from_gray(200)),
             )
@@ -1405,6 +1416,34 @@ fn truncate_str(text: &str, max_chars: usize) -> String {
         }
         out.push(ch);
     }
+    out
+}
+
+fn max_token_len_for_width(width: f32) -> usize {
+    ((width / 7.5).floor() as usize).clamp(20, 140)
+}
+
+fn wrap_text_for_ui_width(input: &str, width: f32) -> String {
+    let max_token_len = max_token_len_for_width(width.max(120.0));
+    let mut out = String::with_capacity(input.len());
+    let mut run_len = 0usize;
+
+    for ch in input.chars() {
+        if ch.is_whitespace() {
+            run_len = 0;
+            out.push(ch);
+            continue;
+        }
+
+        if run_len >= max_token_len {
+            out.push('\n');
+            run_len = 0;
+        }
+
+        out.push(ch);
+        run_len += 1;
+    }
+
     out
 }
 

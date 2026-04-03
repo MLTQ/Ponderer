@@ -49,7 +49,7 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - **Does**: Renders a rich status strip under the app title: visual-state emoji + color, orientation disposition chip, and last-action one-liner — all sourced from live WS events rather than polling.
 
 ### `render_live_tool_entry` / `tool_badge_color`
-- **Does**: Formats each live tool-progress entry as a colored tool-name badge (color by category: shell=amber, files=blue, http=purple, memory=green, comfy=orange, vision=pink) + truncated monospace output.
+- **Does**: Formats each live tool-progress entry as a colored tool-name badge (color by category: shell=amber, files=blue, http=purple, memory=green, comfy=orange, vision=pink) + truncated monospace output, with long URLs/tokens force-wrapped against the current panel width so tool previews do not resize the layout.
 
 ### Sidebar — three zones
 - **Does**: The right panel ("🧠 Mind") is divided into three zones: (1) mind-state group (orientation, last action, last journal), (2) "💭 Live Stream" collapsible section showing a rotating wireframe token monitor plus the last 600 chars of the active LLM token stream, (3) grouped turn-history log via `render_event_log`.
@@ -67,6 +67,7 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - Activity panel is now visible by default so autonomous progress and wake/error telemetry are immediately visible without extra clicks.
 - `FrontendEvent::TokenMetrics` is consumed directly by `AgentApp` and not pushed into the activity log, since the wireframe monitor is the primary presentation for those samples.
 - Main chat surface now uses fixed vertical regions (chat history, live tool output, composer) to prevent tool/output panels from overlapping chat bubbles or pushing the composer off-screen.
+- Sidebar helper text, live tool previews, and approval reasons insert soft line breaks into long unbroken tokens so the Mind panel can stay narrow even when tools emit raw URLs.
 - UI-level API failures are surfaced in the activity log as `FrontendEvent::Error` entries.
 - Prompt inspector windows are opened on demand from agent message rows and support toggling system-prompt visibility plus translucent source highlights over prompt sections.
 - `FrontendEvent::ApprovalRequest` is NOT pushed to the activity log; it is deduplicated and stored in `pending_approvals`. Each pending approval renders as an `egui::Window` popup (centered, non-collapsible) with "✅ Allow this session" and "✖ Dismiss" buttons. Approval calls `ApiClient::approve_tool`; dismiss just removes the entry from `pending_approvals`.
