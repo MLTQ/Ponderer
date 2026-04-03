@@ -350,7 +350,7 @@ fn draw_wireframe_sphere(
                 ring_radius * longitude.sin(),
             ));
         }
-        draw_projected_polyline(painter, rect, center, radius, yaw, pitch, &points, base_color, 0.85);
+        draw_projected_polyline(painter, rect, center, radius, yaw, pitch, &points, base_color, 1.0);
     }
 }
 
@@ -383,8 +383,8 @@ fn draw_trace(
             Color32::from_rgb(255, 90, 72),
             normalized_radius.max(segment[1].novelty.min(1.0) * 0.5),
         );
-        let alpha = (0.18 + 0.82 * age).clamp(0.0, 1.0);
-        let depth_boost = ((to.z + 1.5) / 3.0).clamp(0.3, 1.0);
+        let alpha = (0.35 + 0.65 * age).clamp(0.0, 1.0);
+        let depth_boost = ((to.z + 1.5) / 3.0).clamp(0.5, 1.0);
         let stroke = Stroke::new(
             1.15 + 1.7 * segment[1].emphasis,
             Color32::from(Rgba::from(color) * (alpha * depth_boost)),
