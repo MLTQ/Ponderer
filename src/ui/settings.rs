@@ -1,5 +1,4 @@
 use super::comfy_settings::ComfySettingsPanel;
-use super::orbweaver_settings::OrbWeaverSettingsPanel;
 use super::plugin_settings_form::PluginSettingsForm;
 use crate::api::{
     BackendPluginManifest, PluginSettingsSchemaManifest, PluginSettingsTabManifest, ScheduledJob,
@@ -50,7 +49,6 @@ pub struct SettingsPanel {
     selected_tab: String,
     plugin_manifests: Vec<BackendPluginManifest>,
     comfy_panel: ComfySettingsPanel,
-    orbweaver_panel: OrbWeaverSettingsPanel,
     scheduled_jobs: Vec<ScheduledJob>,
     scheduled_job_editors: HashMap<String, ScheduledJobEditor>,
     scheduled_job_actions: Vec<ScheduledJobAction>,
@@ -72,7 +70,6 @@ impl SettingsPanel {
             selected_tab: CORE_TAB_GENERAL.to_string(),
             plugin_manifests: Vec::new(),
             comfy_panel,
-            orbweaver_panel: OrbWeaverSettingsPanel::new(),
             scheduled_jobs: Vec::new(),
             scheduled_job_editors: HashMap::new(),
             scheduled_job_actions: Vec::new(),
@@ -150,17 +147,19 @@ impl SettingsPanel {
                         CORE_TAB_MEMORY => self.render_memory_tab(ui),
                         CORE_TAB_SYSTEM => self.render_system_tab(ui),
                         CORE_TAB_SCHEDULES => self.render_schedules_tab(ui),
-                        "skill.orbweaver" => {
-                            let (orbweaver_panel, config) =
-                                (&mut self.orbweaver_panel, &mut self.config);
-                            orbweaver_panel.render_contents(ui, config);
-                        }
                         "skill.comfy" => self.render_comfy_tab(ui, ctx),
                         _ => {
                             if let Some((plugin_id, schema)) =
                                 self.dynamic_plugin_schema_for_tab(&selected_tab)
                             {
-                                ui.heading("Plugin Settings");
+                                let heading = self
+                                    .plugin_manifests
+                                    .iter()
+                                    .find(|m| m.id == plugin_id)
+                                    .map(|m| m.name.as_str())
+                                    .unwrap_or("Plugin Settings")
+                                    .to_string();
+                                ui.heading(heading);
                                 ui.add_space(8.0);
                                 PluginSettingsForm::render(
                                     ui,
@@ -874,13 +873,6 @@ impl SettingsPanel {
                 order: 200,
             });
         }
-        if !tabs.iter().any(|tab| tab.id == "skill.orbweaver") {
-            tabs.push(PluginSettingsTabManifest {
-                id: "skill.orbweaver".to_string(),
-                title: "OrbWeaver".to_string(),
-                order: 210,
-            });
-        }
         tabs.sort_by(|left, right| {
             left.order
                 .cmp(&right.order)
@@ -922,7 +914,7 @@ impl SettingsPanel {
                 .as_ref()
                 .map(|tab| tab.id == tab_id)
                 .unwrap_or(false);
-            if !matches_tab || tab_id == "skill.comfy" || tab_id == "skill.orbweaver" {
+            if !matches_tab || tab_id == "skill.comfy" {
                 return None;
             }
             manifest
