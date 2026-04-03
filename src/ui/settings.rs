@@ -5,7 +5,7 @@ use crate::api::{
 };
 use crate::config::AgentConfig;
 use eframe::egui;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const CORE_TAB_GENERAL: &str = "core.general";
 const CORE_TAB_BEHAVIOR: &str = "core.behavior";
@@ -43,6 +43,12 @@ struct ScheduledJobEditor {
     enabled: bool,
 }
 
+#[derive(Debug, Clone)]
+struct PendingScheduledJobDraft {
+    local_id: String,
+    editor: ScheduledJobEditor,
+}
+
 pub struct SettingsPanel {
     pub config: AgentConfig,
     pub show: bool,
@@ -51,12 +57,15 @@ pub struct SettingsPanel {
     comfy_panel: ComfySettingsPanel,
     scheduled_jobs: Vec<ScheduledJob>,
     scheduled_job_editors: HashMap<String, ScheduledJobEditor>,
+    pending_new_scheduled_jobs: Vec<PendingScheduledJobDraft>,
+    pending_deleted_job_ids: HashSet<String>,
     scheduled_job_actions: Vec<ScheduledJobAction>,
     scheduled_jobs_error: Option<String>,
     new_job_name: String,
     new_job_prompt: String,
     new_job_interval_minutes: u64,
     new_job_enabled: bool,
+    next_local_scheduled_job_id: u64,
 }
 
 impl SettingsPanel {
@@ -72,12 +81,15 @@ impl SettingsPanel {
             comfy_panel,
             scheduled_jobs: Vec::new(),
             scheduled_job_editors: HashMap::new(),
+            pending_new_scheduled_jobs: Vec::new(),
+            pending_deleted_job_ids: HashSet::new(),
             scheduled_job_actions: Vec::new(),
             scheduled_jobs_error: None,
             new_job_name: String::new(),
             new_job_prompt: String::new(),
             new_job_interval_minutes: 60,
             new_job_enabled: true,
+            next_local_scheduled_job_id: 1,
         }
     }
 
@@ -94,6 +106,8 @@ impl SettingsPanel {
     pub fn set_scheduled_jobs(&mut self, scheduled_jobs: Vec<ScheduledJob>) {
         self.scheduled_jobs = scheduled_jobs;
         self.scheduled_job_editors.clear();
+        self.pending_new_scheduled_jobs.clear();
+        self.pending_deleted_job_ids.clear();
     }
 
     pub fn set_scheduled_jobs_error(&mut self, error: Option<String>) {
@@ -613,7 +627,7 @@ impl SettingsPanel {
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(
-                "Recurring schedules queue private operator messages on an interval (1-10080 minutes).",
+                "Recurring schedules queue private operator messages on an interval (1-10080 minutes). Changes on this page apply only when you click Save & Apply.",
             )
             .small()
             .weak(),
@@ -630,7 +644,11 @@ impl SettingsPanel {
                 self.scheduled_job_actions.push(ScheduledJobAction::Refresh);
             }
             ui.label(
-                egui::RichText::new(format!("{} configured", self.scheduled_jobs.len()))
+                egui::RichText::new(format!(
+                    "{} configured",
+                    self.scheduled_jobs.len() + self.pending_new_scheduled_jobs.len()
+                        - self.pending_deleted_job_ids.len().min(self.scheduled_jobs.len())
+                ))
                     .small()
                     .weak(),
             );
@@ -648,10 +666,10 @@ impl SettingsPanel {
         }
 
         for job in self.scheduled_jobs.clone() {
-            let mut should_save = false;
             let mut should_revert = false;
             let mut should_delete = false;
-            let mut save_payload: Option<(String, String, u64, bool)> = None;
+            let mut should_undo_delete = false;
+            let pending_delete = self.pending_deleted_job_ids.contains(&job.id);
             {
                 let editor = self.editor_for_job(&job);
                 ui.group(|ui| {
@@ -682,6 +700,98 @@ impl SettingsPanel {
                         );
                     }
 
+                    if pending_delete {
+                        ui.colored_label(
+                            egui::Color32::LIGHT_RED,
+                            "Marked for deletion. Save & Apply to remove this schedule.",
+                        );
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.label("Name:");
+                            ui.text_edit_singleline(&mut editor.name);
+                            ui.label("Interval (minutes):");
+                            ui.add(
+                                egui::DragValue::new(&mut editor.interval_minutes).range(1..=10080),
+                            );
+                        });
+
+                        ui.label("Prompt:");
+                        ui.add(
+                            egui::TextEdit::multiline(&mut editor.prompt)
+                                .desired_rows(3)
+                                .desired_width(f32::INFINITY),
+                        );
+
+                        let dirty_after_edit = editor.name.trim() != job.name
+                            || editor.prompt.trim() != job.prompt
+                            || editor.interval_minutes.clamp(1, 10080) != job.interval_minutes
+                            || editor.enabled != job.enabled;
+                        if dirty_after_edit {
+                            ui.label(
+                                egui::RichText::new("Unsaved schedule changes")
+                                    .small()
+                                    .color(egui::Color32::from_rgb(220, 190, 110)),
+                            );
+                        }
+                    }
+
+                    ui.horizontal(|ui| {
+                        if pending_delete {
+                            if ui.button("Undo Delete").clicked() {
+                                should_undo_delete = true;
+                            }
+                        } else {
+                            if ui.button("Revert").clicked() {
+                                should_revert = true;
+                            }
+                            if ui
+                                .button(
+                                    egui::RichText::new("Delete on Save")
+                                        .color(egui::Color32::LIGHT_RED),
+                                )
+                                .clicked()
+                            {
+                                should_delete = true;
+                            }
+                        }
+                    });
+                });
+            }
+            ui.add_space(6.0);
+
+            if should_revert {
+                self.reset_editor_for_job(&job);
+                self.pending_deleted_job_ids.remove(&job.id);
+            }
+
+            if should_undo_delete {
+                self.pending_deleted_job_ids.remove(&job.id);
+            }
+
+            if should_delete {
+                self.pending_deleted_job_ids.insert(job.id.clone());
+            }
+        }
+
+        for draft in self.pending_new_scheduled_jobs.clone() {
+            let mut should_remove = false;
+            {
+                let editor = self.editor_for_pending_job(&draft.local_id);
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("new")
+                                .weak()
+                                .small()
+                                .italics(),
+                        );
+                        ui.label(
+                            egui::RichText::new("Will be created on Save & Apply")
+                                .small()
+                                .color(egui::Color32::from_rgb(220, 190, 110)),
+                        );
+                    });
+
                     ui.horizontal(|ui| {
                         ui.label("Name:");
                         ui.text_edit_singleline(&mut editor.name);
@@ -689,6 +799,7 @@ impl SettingsPanel {
                         ui.add(egui::DragValue::new(&mut editor.interval_minutes).range(1..=10080));
                     });
 
+                    ui.checkbox(&mut editor.enabled, "Enabled");
                     ui.label("Prompt:");
                     ui.add(
                         egui::TextEdit::multiline(&mut editor.prompt)
@@ -697,55 +808,22 @@ impl SettingsPanel {
                     );
 
                     ui.horizontal(|ui| {
-                        if ui.button("Save Changes").clicked() {
-                            should_save = true;
-                        }
-                        if ui.button("Revert").clicked() {
-                            should_revert = true;
-                        }
                         if ui
-                            .button(egui::RichText::new("Delete").color(egui::Color32::LIGHT_RED))
+                            .button(
+                                egui::RichText::new("Discard Draft")
+                                    .color(egui::Color32::LIGHT_RED),
+                            )
                             .clicked()
                         {
-                            should_delete = true;
+                            should_remove = true;
                         }
                     });
                 });
-                if should_save {
-                    save_payload = Some((
-                        editor.name.trim().to_string(),
-                        editor.prompt.trim().to_string(),
-                        editor.interval_minutes.clamp(1, 10080),
-                        editor.enabled,
-                    ));
-                }
             }
             ui.add_space(6.0);
 
-            if should_revert {
-                self.reset_editor_for_job(&job);
-            }
-
-            if let Some((name, prompt, interval_minutes, enabled)) = save_payload {
-                if name.is_empty() || prompt.is_empty() {
-                    self.scheduled_jobs_error =
-                        Some("Name and prompt are required to save a schedule.".to_string());
-                } else {
-                    self.scheduled_jobs_error = None;
-                    self.scheduled_job_actions.push(ScheduledJobAction::Update {
-                        job_id: job.id.clone(),
-                        name,
-                        prompt,
-                        interval_minutes,
-                        enabled,
-                    });
-                }
-            }
-
-            if should_delete {
-                self.scheduled_job_actions.push(ScheduledJobAction::Delete {
-                    job_id: job.id.clone(),
-                });
+            if should_remove {
+                self.remove_pending_job(&draft.local_id);
             }
         }
 
@@ -775,12 +853,16 @@ impl SettingsPanel {
                     Some("Name and prompt are required to create a schedule.".to_string());
             } else {
                 self.scheduled_jobs_error = None;
-                self.scheduled_job_actions.push(ScheduledJobAction::Create {
-                    name,
-                    prompt,
-                    interval_minutes: self.new_job_interval_minutes.clamp(1, 10080),
-                    enabled: self.new_job_enabled,
+                self.pending_new_scheduled_jobs.push(PendingScheduledJobDraft {
+                    local_id: format!("new-schedule-{}", self.next_local_scheduled_job_id),
+                    editor: ScheduledJobEditor {
+                        name,
+                        prompt,
+                        interval_minutes: self.new_job_interval_minutes.clamp(1, 10080),
+                        enabled: self.new_job_enabled,
+                    },
                 });
+                self.next_local_scheduled_job_id += 1;
                 self.new_job_name.clear();
                 self.new_job_prompt.clear();
                 self.new_job_interval_minutes = 60;
@@ -812,10 +894,50 @@ impl SettingsPanel {
         );
     }
 
+    fn editor_for_pending_job(&mut self, local_id: &str) -> &mut ScheduledJobEditor {
+        self.pending_new_scheduled_jobs
+            .iter_mut()
+            .find(|draft| draft.local_id == local_id)
+            .map(|draft| &mut draft.editor)
+            .expect("pending scheduled job editor should exist")
+    }
+
+    fn remove_pending_job(&mut self, local_id: &str) {
+        self.pending_new_scheduled_jobs
+            .retain(|draft| draft.local_id != local_id);
+    }
+
     fn queue_dirty_scheduled_job_updates(&mut self) -> bool {
         let mut pending_updates = Vec::new();
 
+        for draft in &self.pending_new_scheduled_jobs {
+            let name = draft.editor.name.trim().to_string();
+            let prompt = draft.editor.prompt.trim().to_string();
+            if name.is_empty() || prompt.is_empty() {
+                self.scheduled_jobs_error = Some(
+                    "All pending schedules need a name and prompt before you save.".to_string(),
+                );
+                return false;
+            }
+
+            pending_updates.push(ScheduledJobAction::Create {
+                name,
+                prompt,
+                interval_minutes: draft.editor.interval_minutes.clamp(1, 10080),
+                enabled: draft.editor.enabled,
+            });
+        }
+
+        for job_id in &self.pending_deleted_job_ids {
+            pending_updates.push(ScheduledJobAction::Delete {
+                job_id: job_id.clone(),
+            });
+        }
+
         for job in &self.scheduled_jobs {
+            if self.pending_deleted_job_ids.contains(&job.id) {
+                continue;
+            }
             let Some(editor) = self.scheduled_job_editors.get(&job.id) else {
                 continue;
             };
