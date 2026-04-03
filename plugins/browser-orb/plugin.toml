@@ -1,0 +1,9 @@
+id = "browser-orb"
+name = "Browser-Orb"
+version = "0.1.0"
+description = "Portable browser automation runtime plugin for Ponderer powered by agent-browser."
+plugin_type = "runtime_process"
+command = ["./scripts/run_plugin.sh"]
+settings_schema_file = "settings.schema.json"
+settings_tab_title = "Browser-Orb"
+settings_tab_order = 340

@@ -7,7 +7,14 @@ Cargo.lock
 
 # Database files
 *.db
+__pycache__/
+*.pyc
 
-plugins/
+!plugins/
+plugins/*
+!plugins/browser-orb/
+!plugins/browser-orb/**
+plugins/browser-orb/**/__pycache__/
+plugins/browser-orb/**/*.pyc
 
 .DS_Store

@@ -1,0 +1,95 @@
+{
+  "fields": [
+    {
+      "key": "enabled",
+      "title": "Enabled",
+      "kind": "boolean",
+      "help": "Start Browser-Orb when Ponderer boots.",
+      "default_value": false
+    },
+    {
+      "key": "agent_browser_command",
+      "title": "agent-browser Command",
+      "kind": "path",
+      "help": "Path to the agent-browser executable. Leave as 'agent-browser' if it is already in PATH.",
+      "default_value": "agent-browser"
+    },
+    {
+      "key": "allow_unrestricted_navigation",
+      "title": "Allow Unrestricted Navigation",
+      "kind": "boolean",
+      "help": "When disabled, Browser-Orb blocks non-http(s) URLs and local/private hosts. When enabled, local/private/file/about navigation is permitted.",
+      "default_value": false
+    },
+    {
+      "key": "allowed_domains",
+      "title": "Allowed Domains",
+      "kind": "multiline",
+      "help": "Optional domain allowlist, one per line or comma-separated. Example: example.com or *.example.com. Applied when unrestricted navigation is disabled.",
+      "default_value": ""
+    },
+    {
+      "key": "allow_eval",
+      "title": "Allow JavaScript Eval",
+      "kind": "boolean",
+      "help": "Enable the browser_eval tool. Disabled by default because it executes arbitrary page JavaScript.",
+      "default_value": false
+    },
+    {
+      "key": "allow_persistent_auth",
+      "title": "Allow Persistent Auth",
+      "kind": "boolean",
+      "help": "Enable session persistence through agent-browser so login cookies/localStorage survive browser restarts.",
+      "default_value": false
+    },
+    {
+      "key": "persistent_auth_session_name",
+      "title": "Persistent Auth Session",
+      "kind": "text",
+      "help": "Session bucket name used when persistent auth is enabled.",
+      "default_value": "browser-orb"
+    },
+    {
+      "key": "persistent_auth_encryption_key",
+      "title": "Persistent Auth Key",
+      "kind": "secret",
+      "help": "Optional 64-character hex key passed as AGENT_BROWSER_ENCRYPTION_KEY for encrypted persisted auth state.",
+      "default_value": ""
+    },
+    {
+      "key": "headed",
+      "title": "Headed Browser",
+      "kind": "boolean",
+      "help": "Show the browser window instead of running headless.",
+      "default_value": false
+    },
+    {
+      "key": "default_snapshot_interactive_only",
+      "title": "Snapshot Interactive Only",
+      "kind": "boolean",
+      "help": "Default browser_snapshot behavior: include only interactive elements unless the tool call overrides it.",
+      "default_value": true
+    },
+    {
+      "key": "default_snapshot_compact",
+      "title": "Snapshot Compact Mode",
+      "kind": "boolean",
+      "help": "Default browser_snapshot behavior: remove empty structural elements unless the tool call overrides it.",
+      "default_value": true
+    },
+    {
+      "key": "default_snapshot_depth",
+      "title": "Snapshot Depth",
+      "kind": "number",
+      "help": "Default max depth for browser_snapshot. Use 0 or a negative value for the full tree.",
+      "default_value": 6
+    },
+    {
+      "key": "screenshot_dir",
+      "title": "Screenshot Folder",
+      "kind": "path",
+      "help": "Folder used for Browser-Orb screenshots when the tool call does not provide a path.",
+      "default_value": "./data/screenshots"
+    }
+  ]
+}
