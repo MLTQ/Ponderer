@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "image-orb"
+version = "0.1.0"
+description = "Portable multi-family image generation runtime plugin for Ponderer"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "diffusers>=0.31.0",
+  "torch",
+  "transformers",
+  "accelerate",
+  "safetensors",
+  "huggingface_hub",
+  "peft",
+  "gguf>=0.10.0",
+  "Pillow",
+]
+
+[tool.setuptools]
+packages = ["image_orb"]

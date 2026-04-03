@@ -16,5 +16,14 @@ plugins/*
 !plugins/browser-orb/**
 plugins/browser-orb/**/__pycache__/
 plugins/browser-orb/**/*.pyc
+!plugins/image-orb/
+!plugins/image-orb/**
+plugins/image-orb/.venv/
+plugins/image-orb/data/
+plugins/image-orb/image_orb.egg-info/
+plugins/image-orb/**/__pycache__/
+plugins/image-orb/**/*.pyc
+plugins/image-orb/.DS_Store
+plugins/image-orb/**/.DS_Store
 
 .DS_Store

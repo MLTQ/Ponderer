@@ -1,0 +1,237 @@
+{
+  "fields": [
+    {
+      "key": "enabled",
+      "title": "Enabled",
+      "kind": "boolean",
+      "help": "Start Image-Orb when Ponderer boots.",
+      "default_value": false
+    },
+    {
+      "key": "model_family",
+      "title": "Model Family",
+      "kind": "select",
+      "help": "Select the pipeline family. Prompt handling differs by family.",
+      "default_value": "sdxl",
+      "options": [
+        { "value": "flux", "label": "FLUX" },
+        { "value": "sdxl", "label": "SDXL" },
+        { "value": "sd15", "label": "SD 1.5" }
+      ]
+    },
+    {
+      "key": "model_ref",
+      "title": "Model Reference",
+      "kind": "text",
+      "help": "Hugging Face repo id or local model path. Relative paths are checked from the Ponderer runtime folder first, then this plugin folder. For FLUX GGUF, set this to a .gguf file path.",
+      "required": true,
+      "default_value": "stabilityai/stable-diffusion-xl-base-1.0"
+    },
+    {
+      "key": "flux_base_model_ref",
+      "title": "FLUX Base Model",
+      "kind": "text",
+      "help": "Used only when model_family=flux and model_ref points to a .gguf transformer file.",
+      "default_value": "black-forest-labs/FLUX.1-dev"
+    },
+    {
+      "key": "flux_gguf_compute_dtype",
+      "title": "FLUX GGUF Compute Dtype",
+      "kind": "select",
+      "help": "Compute dtype used for GGUF transformer quantization execution.",
+      "default_value": "auto",
+      "options": [
+        { "value": "auto", "label": "Auto" },
+        { "value": "bfloat16", "label": "bfloat16" },
+        { "value": "float16", "label": "float16" },
+        { "value": "float32", "label": "float32" }
+      ]
+    },
+    {
+      "key": "cache_dir",
+      "title": "Model Cache",
+      "kind": "path",
+      "help": "Portable local cache for downloaded model weights.",
+      "default_value": "./data/models"
+    },
+    {
+      "key": "output_dir",
+      "title": "Output Folder",
+      "kind": "path",
+      "help": "Where generated image files are written.",
+      "default_value": "./data/output"
+    },
+    {
+      "key": "device",
+      "title": "Device",
+      "kind": "select",
+      "help": "Inference target device. Choose CUDA to use the CUDA Device Index below.",
+      "default_value": "auto",
+      "options": [
+        { "value": "auto", "label": "Auto" },
+        { "value": "cuda", "label": "CUDA" },
+        { "value": "mps", "label": "Apple MPS" },
+        { "value": "cpu", "label": "CPU" }
+      ]
+    },
+    {
+      "key": "cuda_device_index",
+      "title": "CUDA Device Index",
+      "kind": "number",
+      "help": "Used only when Device is CUDA. Set 0 for your primary GPU, 1 for a secondary GPU, etc.",
+      "default_value": 0
+    },
+    {
+      "key": "dtype",
+      "title": "Precision",
+      "kind": "select",
+      "help": "Torch dtype used when loading the pipeline.",
+      "default_value": "auto",
+      "options": [
+        { "value": "auto", "label": "Auto" },
+        { "value": "bfloat16", "label": "bfloat16" },
+        { "value": "float16", "label": "float16" },
+        { "value": "float32", "label": "float32" }
+      ]
+    },
+    {
+      "key": "attention_impl",
+      "title": "Attention",
+      "kind": "select",
+      "help": "Attention optimization mode. xformers requires xformers installed.",
+      "default_value": "auto",
+      "options": [
+        { "value": "auto", "label": "Auto" },
+        { "value": "none", "label": "None" },
+        { "value": "xformers", "label": "xFormers" },
+        { "value": "slicing", "label": "Attention Slicing" }
+      ]
+    },
+    {
+      "key": "enable_model_cpu_offload",
+      "title": "CPU Offload",
+      "kind": "boolean",
+      "help": "Enable model CPU offload when supported by the loaded pipeline.",
+      "default_value": false
+    },
+    {
+      "key": "memory_safe_mode",
+      "title": "Memory Safe Mode",
+      "kind": "boolean",
+      "help": "Automatically cap resolution/steps by model family and device to reduce out-of-memory crashes.",
+      "default_value": true
+    },
+    {
+      "key": "allow_cpu_fallback",
+      "title": "Allow CPU Fallback",
+      "kind": "boolean",
+      "help": "If enabled, meta-tensor failures may retry on CPU (can dramatically increase RAM use).",
+      "default_value": false
+    },
+    {
+      "key": "unload_after_generation",
+      "title": "Unload After Generation",
+      "kind": "boolean",
+      "help": "Unload the pipeline after each image (lower idle RAM, but may increase latency).",
+      "default_value": false
+    },
+    {
+      "key": "max_prompt_chars",
+      "title": "Max Prompt Characters",
+      "kind": "number",
+      "help": "Clamp very long prompts before generation to keep allocations bounded.",
+      "default_value": 1200
+    },
+    {
+      "key": "max_rss_mb",
+      "title": "Max RSS (MB)",
+      "kind": "number",
+      "help": "Soft process memory budget. Image-Orb refuses generation above this and unloads when exceeded.",
+      "default_value": 20000
+    },
+    {
+      "key": "local_files_only",
+      "title": "Local Files Only",
+      "kind": "boolean",
+      "help": "Refuse network downloads and load only from local cache/path.",
+      "default_value": false
+    },
+    {
+      "key": "single_file_config_dir",
+      "title": "Single-File Config Cache",
+      "kind": "path",
+      "help": "Diffusers config folder used for local .safetensors/.ckpt pipelines. If missing, Image-Orb can bootstrap it when Local Files Only is disabled.",
+      "default_value": "./data/models/diffusers-configs"
+    },
+    {
+      "key": "single_file_config_repo",
+      "title": "Single-File Config Repo",
+      "kind": "text",
+      "help": "Optional Hugging Face repo id used to bootstrap single-file config cache (leave blank for family defaults).",
+      "default_value": ""
+    },
+    {
+      "key": "width_default",
+      "title": "Default Width",
+      "kind": "number",
+      "default_value": 768
+    },
+    {
+      "key": "height_default",
+      "title": "Default Height",
+      "kind": "number",
+      "default_value": 768
+    },
+    {
+      "key": "num_inference_steps_default",
+      "title": "Default Steps",
+      "kind": "number",
+      "default_value": 24
+    },
+    {
+      "key": "guidance_scale_default",
+      "title": "Default Guidance",
+      "kind": "number",
+      "default_value": 4.0
+    },
+    {
+      "key": "negative_prompt_default",
+      "title": "Default Negative Prompt",
+      "kind": "multiline",
+      "help": "Used by SDXL/SD1.5 when no per-call negative prompt is provided.",
+      "default_value": ""
+    },
+    {
+      "key": "seed_default",
+      "title": "Default Seed",
+      "kind": "number",
+      "help": "Use -1 for random seed every call.",
+      "default_value": -1
+    },
+    {
+      "key": "save_format",
+      "title": "Save Format",
+      "kind": "select",
+      "default_value": "png",
+      "options": [
+        { "value": "png", "label": "PNG" },
+        { "value": "jpg", "label": "JPEG" },
+        { "value": "webp", "label": "WEBP" }
+      ]
+    },
+    {
+      "key": "lora_stack_json",
+      "title": "LoRA Stack (JSON)",
+      "kind": "multiline",
+      "help": "JSON array of adapters. Example: [{\"source\":\"my/lora\",\"weight_name\":\"lora.safetensors\",\"adapter_name\":\"style\",\"scale\":0.8,\"enabled\":true}]",
+      "default_value": "[]"
+    },
+    {
+      "key": "prompt_hint",
+      "title": "Prompt Hint",
+      "kind": "multiline",
+      "help": "Optional guidance injected into prompt contributions for this image family.",
+      "default_value": "FLUX prefers natural language scene descriptions. SDXL/SD1.5 often benefit from explicit negative prompts."
+    }
+  ]
+}

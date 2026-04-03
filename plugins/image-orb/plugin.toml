@@ -1,0 +1,10 @@
+id = "image-orb"
+name = "Image-Orb"
+version = "0.1.0"
+description = "Portable runtime image generation plugin (Flux / SDXL / SD1.5) for Ponderer."
+plugin_type = "runtime_process"
+command = ["./scripts/run_plugin.sh"]
+settings_schema_file = "settings.schema.json"
+settings_tab_title = "Image-Orb"
+settings_tab_order = 330
+
