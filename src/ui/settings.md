@@ -25,8 +25,12 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 - **Does**: Synchronizes backend schedule snapshots/errors into the UI and emits queued manual CRUD actions back to `app.rs`.
 - **Interacts with**: `api.rs` scheduled-job endpoints (indirectly through `app.rs`)
 
+### `queue_dirty_scheduled_job_updates`
+- **Does**: Diffs in-progress schedule editor values against the last backend snapshot, validates dirty rows, and enqueues `Update` actions so the global `Save & Apply` button persists schedule edits too.
+- **Interacts with**: `render`, scheduled-job editor map, and `app.rs` schedule action dispatcher.
+
 ### `SettingsPanel::render(ctx) -> Option<AgentConfig>`
-- **Does**: Draws the tabbed settings window and returns `Some(config)` when the user clicks `Save & Apply`.
+- **Does**: Draws the tabbed settings window and returns `Some(config)` when the user clicks `Save & Apply`. Before returning, it now flushes any dirty scheduled-job edits into the action queue so schedule changes are not lost behind the row-local save buttons.
 - **Interacts with**: `ui/app.rs` for persistence through the backend API.
 
 ### Core tab renderers
@@ -55,4 +59,4 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 - Plugin tabs are discovered once from backend manifests and do not hot-reload during runtime; built-in ComfyUI and OrbWeaver tabs have local fallbacks if plugin discovery fails.
 - Unknown plugin settings tabs no longer require native frontend code as long as the backend provides a supported schema.
 - The global `Save & Apply` path always syncs the in-memory Comfy workflow into `AgentConfig` before returning the config.
-- Scheduled jobs are managed immediately (live API calls via `app.rs`) and are independent from `Save & Apply`.
+- Scheduled jobs are still managed immediately (live API calls via `app.rs`), but `Save & Apply` now also flushes any dirty schedule edits into that immediate action queue.

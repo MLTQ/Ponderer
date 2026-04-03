@@ -180,6 +180,9 @@ impl SettingsPanel {
 
                 ui.horizontal(|ui| {
                     if ui.button("💾 Save & Apply").clicked() {
+                        if !self.queue_dirty_scheduled_job_updates() {
+                            return;
+                        }
                         let (comfy_panel, config) = (&mut self.comfy_panel, &mut self.config);
                         comfy_panel.sync_workflow_to_config(config);
                         new_config = Some(self.config.clone());
@@ -807,6 +810,52 @@ impl SettingsPanel {
                 enabled: job.enabled,
             },
         );
+    }
+
+    fn queue_dirty_scheduled_job_updates(&mut self) -> bool {
+        let mut pending_updates = Vec::new();
+
+        for job in &self.scheduled_jobs {
+            let Some(editor) = self.scheduled_job_editors.get(&job.id) else {
+                continue;
+            };
+
+            let name = editor.name.trim().to_string();
+            let prompt = editor.prompt.trim().to_string();
+            let interval_minutes = editor.interval_minutes.clamp(1, 10080);
+            let enabled = editor.enabled;
+
+            let is_dirty = name != job.name
+                || prompt != job.prompt
+                || interval_minutes != job.interval_minutes
+                || enabled != job.enabled;
+            if !is_dirty {
+                continue;
+            }
+
+            if name.is_empty() || prompt.is_empty() {
+                self.scheduled_jobs_error = Some(format!(
+                    "Schedule '{}' has unsaved invalid edits. Name and prompt are required.",
+                    job.id
+                ));
+                return false;
+            }
+
+            pending_updates.push(ScheduledJobAction::Update {
+                job_id: job.id.clone(),
+                name,
+                prompt,
+                interval_minutes,
+                enabled,
+            });
+        }
+
+        if !pending_updates.is_empty() {
+            self.scheduled_jobs_error = None;
+            self.scheduled_job_actions.extend(pending_updates);
+        }
+
+        true
     }
 
     fn render_comfy_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
