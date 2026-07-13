@@ -7,7 +7,8 @@ use super::settings::{ScheduledJobAction, SettingsPanel};
 use super::token_monitor::TokenMonitorState;
 use crate::api::{
     AgentVisualState, ApiClient, ChatConversation, ChatMessage, ChatTurnPhase, FrontendEvent,
-    OrientationSummary, UpdateScheduledJobRequest, DEFAULT_CHAT_CONVERSATION_ID,
+    OrientationSummary, RuntimeIntentionSummary, UpdateScheduledJobRequest,
+    DEFAULT_CHAT_CONVERSATION_ID,
 };
 use crate::config::AgentConfig;
 
@@ -49,6 +50,11 @@ pub struct AgentApp {
     visual_state_since: Option<chrono::DateTime<chrono::Utc>>,
     /// Short description of what the agent is currently doing (from AgentRuntimeStatus).
     current_activity: Option<String>,
+    /// Whether dedicated-machine Loose autonomy is deliberately armed.
+    loose_mode: bool,
+    /// Current or next durable intention exposed by backend runtime status.
+    current_intention: Option<RuntimeIntentionSummary>,
+    show_loose_arm_confirmation: bool,
     /// Conversation pending delete confirmation (id).
     confirm_delete_conversation_id: Option<String>,
     /// Conversation pending rename: (id, draft_title).
@@ -143,6 +149,9 @@ impl AgentApp {
             token_monitor: TokenMonitorState::new(),
             visual_state_since: None,
             current_activity: None,
+            loose_mode: false,
+            current_intention: None,
+            show_loose_arm_confirmation: false,
             confirm_delete_conversation_id: None,
             rename_conversation: None,
             event_detail_popup: None,
@@ -165,6 +174,8 @@ impl AgentApp {
                 self.current_state = status.visual_state;
                 self.visual_state_since = status.visual_state_since;
                 self.current_activity = status.current_activity;
+                self.loose_mode = status.loose_mode;
+                self.current_intention = status.current_intention;
             }
             Err(error) => {
                 tracing::warn!("Failed to refresh backend status: {}", error);
@@ -774,6 +785,39 @@ impl eframe::App for AgentApp {
                                 .color(egui::Color32::LIGHT_BLUE),
                         );
                     }
+                    if let Some(ref intention) = self.current_intention {
+                        ui.separator();
+                        let mode_label = if self.loose_mode {
+                            "🜁 Loose goal"
+                        } else {
+                            "🎯 Intention"
+                        };
+                        ui.label(egui::RichText::new(mode_label).small().strong().color(
+                            if self.loose_mode {
+                                egui::Color32::from_rgb(230, 155, 70)
+                            } else {
+                                egui::Color32::LIGHT_GRAY
+                            },
+                        ));
+                        ui.label(
+                            egui::RichText::new(wrap_text_for_ui_width(
+                                &intention.summary,
+                                ui.available_width(),
+                            ))
+                            .small(),
+                        )
+                        .on_hover_text(format!(
+                            "Why: {}\nStatus: {}\nEpisodes: {}{}",
+                            intention.motivation,
+                            intention.status,
+                            intention.attempt_count,
+                            intention
+                                .last_outcome
+                                .as_deref()
+                                .map(|value| format!("\nLast outcome: {value}"))
+                                .unwrap_or_default()
+                        ));
+                    }
                     if self.last_orientation.is_none()
                         && self.last_action.is_none()
                         && self.last_journal.is_none()
@@ -945,6 +989,33 @@ impl eframe::App for AgentApp {
                                 ));
                             }
                         }
+                    }
+
+                    if self.loose_mode {
+                        if ui
+                            .button(
+                                egui::RichText::new("⏹ Stop Loose")
+                                    .color(egui::Color32::from_rgb(255, 120, 90)),
+                            )
+                            .on_hover_text("Disarm Loose mode and cancel the active episode")
+                            .clicked()
+                        {
+                            match self.runtime.block_on(self.api_client.set_loose_mode(false)) {
+                                Ok(enabled) => {
+                                    self.loose_mode = enabled;
+                                    self.settings_panel.config.loose_mode = enabled;
+                                    self.current_state = AgentVisualState::Idle;
+                                }
+                                Err(error) => self
+                                    .push_ui_error(format!("Failed to stop Loose mode: {}", error)),
+                            }
+                        }
+                    } else if ui
+                        .button("▶ Let Run Loose")
+                        .on_hover_text("Arm self-directed autonomy on this machine")
+                        .clicked()
+                    {
+                        self.show_loose_arm_confirmation = true;
                     }
 
                     if ui.button("⚙ Settings").clicked() {
@@ -1120,6 +1191,59 @@ impl eframe::App for AgentApp {
             });
             ui.add_space(8.0);
         });
+
+        if self.show_loose_arm_confirmation {
+            let mut arm = false;
+            let mut cancel = false;
+            egui::Window::new("Arm Loose Mode")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.set_max_width(430.0);
+                    ui.label("Ponderer will choose durable goals and pursue them across bounded episodes.");
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Local shell, filesystem, package, and process actions may run without routine approval. External publication and identity/secrets effects keep their host gates.",
+                        )
+                        .small()
+                        .weak(),
+                    );
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("Arm and begin")
+                                    .color(egui::Color32::from_rgb(230, 155, 70))
+                                    .strong(),
+                            )
+                            .clicked()
+                        {
+                            arm = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if arm {
+                match self.runtime.block_on(self.api_client.set_loose_mode(true)) {
+                    Ok(enabled) => {
+                        self.loose_mode = enabled;
+                        self.settings_panel.config.loose_mode = enabled;
+                        self.settings_panel.config.enable_ambient_loop = true;
+                        self.current_state = AgentVisualState::Idle;
+                    }
+                    Err(error) => {
+                        self.push_ui_error(format!("Failed to arm Loose mode: {}", error));
+                    }
+                }
+                self.show_loose_arm_confirmation = false;
+            } else if cancel {
+                self.show_loose_arm_confirmation = false;
+            }
+        }
 
         // Mind event detail pop-out window.
         if let Some(ref text) = self.event_detail_popup.clone() {

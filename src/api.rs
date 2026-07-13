@@ -123,6 +123,20 @@ pub struct AgentRuntimeStatus {
     /// Short description of what the agent is doing right now.
     #[serde(default)]
     pub current_activity: Option<String>,
+    #[serde(default)]
+    pub loose_mode: bool,
+    #[serde(default)]
+    pub current_intention: Option<RuntimeIntentionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeIntentionSummary {
+    pub id: String,
+    pub summary: String,
+    pub motivation: String,
+    pub status: String,
+    pub attempt_count: u32,
+    pub last_outcome: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -219,6 +233,11 @@ struct ChatTurnPromptResponse {
 #[derive(Debug, Deserialize)]
 struct PauseStateResponse {
     paused: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LooseModeResponse {
+    enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -577,6 +596,20 @@ impl ApiClient {
             .await
             .context("Failed to decode toggle pause response")?;
         Ok(response.paused)
+    }
+
+    pub async fn set_loose_mode(&self, enabled: bool) -> Result<bool> {
+        let response = self
+            .request(reqwest::Method::PUT, "/v1/agent/loose-mode")
+            .json(&serde_json::json!({ "enabled": enabled }))
+            .send()
+            .await?
+            .error_for_status()
+            .context("PUT /v1/agent/loose-mode failed")?
+            .json::<LooseModeResponse>()
+            .await
+            .context("Failed to decode Loose mode response")?;
+        Ok(response.enabled)
     }
 
     /// Grant session-level approval for a tool that was blocked in autonomous mode.
@@ -1080,5 +1113,7 @@ mod tests {
 
         let parsed: AgentRuntimeStatus = serde_json::from_value(payload).expect("decode status");
         assert!(matches!(parsed.visual_state, AgentVisualState::Thinking));
+        assert!(!parsed.loose_mode);
+        assert!(parsed.current_intention.is_none());
     }
 }

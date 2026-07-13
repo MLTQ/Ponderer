@@ -34,7 +34,7 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 - **Interacts with**: `ui/app.rs` for persistence through the backend API.
 
 ### Core tab renderers
-- **Does**: Render grouped core settings tabs: `General`, `Behavior`, `Living Loop`, `Memory`, `System`, and `Schedules`.
+- **Does**: Render grouped core settings tabs: `General`, `Behavior`, `Living Loop`, `Memory`, `System`, and `Schedules`. Living Loop includes Loose-mode arming, episode breath, consecutive-episode, and cooldown controls.
 - **Interacts with**: top-level `AgentConfig` fields.
 - **Notes**: Behavior tab focuses on autonomous loop limits and loop-heat controls. It explicitly explains that disabling configurable chat limits leaves host emergency ceilings in place.
 

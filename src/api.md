@@ -51,6 +51,10 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - **Does**: `POST /v1/agent/tools/:tool_name/approve` — grants session-level approval so the named tool can run autonomously without further prompts.
 - **Interacts with**: `server.rs` `approve_tool` handler → `Agent::grant_session_tool_approval` → `ToolRegistry::grant_session_approval`.
 
+### `ApiClient::set_loose_mode`
+- **Does**: Deliberately arms or disarms dedicated-machine Loose autonomy through the narrow backend control route.
+- **Interacts with**: `ui/app.rs` toolbar confirmation and `server.rs` `/v1/agent/loose-mode`.
+
 ### `ApiClient::list_plugins`
 - **Does**: `GET /v1/plugins` — fetches built-in plus live handshake-enriched plugin manifests so the UI can expose current tools and per-plugin settings tabs.
 - **Interacts with**: `ponderer_backend/src/server.rs` plugin list route.
@@ -82,6 +86,7 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - Persistent loopback clients bypass ambient proxy settings; explicitly configured external backend clients retain normal proxy behavior.
 - Bearer token comes from `PONDERER_BACKEND_TOKEN`; if absent, requests run unauthenticated (useful only when backend auth mode is disabled).
 - WS URL is derived from HTTP base URL (`http -> ws`, `https -> wss`).
+- Runtime status includes whether Loose mode is armed plus the current durable intention summary for the Mind panel.
 - Enum decoding for chat/runtime state is compatibility-tolerant (`snake_case` plus legacy PascalCase aliases) to survive backend/frontend schema drift during upgrades.
 - Conversation list decode errors now include payload preview context to simplify diagnosing response-shape mismatches.
 - Plugin manifest/settings DTOs are intentionally not redefined here; the backend crate is their single source of truth.

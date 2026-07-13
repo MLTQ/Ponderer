@@ -479,6 +479,35 @@ impl SettingsPanel {
         );
         ui.add_space(4.0);
 
+        ui.checkbox(
+            &mut self.config.loose_mode,
+            "Arm Loose mode on this machine",
+        );
+        ui.label(
+            egui::RichText::new(
+                "Allows self-chosen durable goals and auto-approved local shell/filesystem work. The main toolbar provides the deliberate arm/stop surface.",
+            )
+            .small()
+            .weak(),
+        );
+        ui.horizontal(|ui| {
+            ui.label("Breath between episodes (seconds):");
+            ui.add(
+                egui::DragValue::new(&mut self.config.loose_episode_interval_secs).range(1..=60),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Episodes before cooldown:");
+            ui.add(
+                egui::DragValue::new(&mut self.config.loose_max_consecutive_episodes).range(1..=64),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Cooldown (seconds):");
+            ui.add(egui::DragValue::new(&mut self.config.loose_cooldown_secs).range(30..=86400));
+        });
+        ui.add_space(8.0);
+
         ui.horizontal(|ui| {
             ui.label("Ambient min tick (seconds):");
             ui.add(egui::DragValue::new(&mut self.config.ambient_min_interval_secs).range(5..=600));

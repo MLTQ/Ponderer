@@ -6,7 +6,7 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 ## Components
 
 ### `AgentApp`
-- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character panels, `pending_approvals` for approval popups, and mind-state fields: `last_orientation`, `last_action`, `last_journal`, `live_stream_text` (live LLM token stream, any conversation), plus the rolling `token_monitor` trace state.
+- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character panels, deliberate Loose-mode arm confirmation/current durable goal, `pending_approvals` for approval popups, and mind-state fields: `last_orientation`, `last_action`, `last_journal`, `live_stream_text` (live LLM token stream, any conversation), plus the rolling `token_monitor` trace state.
 - **Interacts with**: `crate::api::{ApiClient, FrontendEvent, ChatConversation, ChatMessage, AgentVisualState, OrientationSummary}`, UI subpanels.
 
 ### `AgentApp::new(api_client, fallback_config)`
@@ -68,4 +68,5 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - Prompt inspector windows are opened on demand from agent message rows and support toggling system-prompt visibility plus translucent source highlights over prompt sections.
 - `FrontendEvent::ApprovalRequest` is NOT pushed to the activity log; it is deduplicated and stored in `pending_approvals`. Each pending approval renders as an `egui::Window` popup (centered, non-collapsible) with "✅ Allow this session" and "✖ Dismiss" buttons. Approval calls `ApiClient::approve_tool`; dismiss just removes the entry from `pending_approvals`.
 - Integration settings are discovered from plugin manifests and rendered through one generic schema-driven surface.
+- The top-level `Let Run Loose` control requires confirmation. Once armed it becomes a one-click `Stop Loose` control that persists disarm and cancels the active episode; the Mind panel shows the current goal, motive, status, episode count, and last outcome.
 - Audio autoplay is carried by each media item, so `AgentApp` does not inspect plugin IDs or plugin-specific configuration.
