@@ -155,10 +155,22 @@ pub enum FrontendEvent {
         content: String,
         done: bool,
     },
-    TokenMetrics {
-        conversation_id: String,
-        clear: bool,
+    GenerationStarted {
+        generation_id: String,
+        source: String,
+        conversation_id: Option<String>,
+    },
+    GenerationMetrics {
+        generation_id: String,
+        source: String,
+        conversation_id: Option<String>,
         samples: Vec<TokenMetricSample>,
+    },
+    GenerationFinished {
+        generation_id: String,
+        source: String,
+        conversation_id: Option<String>,
+        outcome: String,
     },
     ActionTaken {
         action: String,
@@ -666,6 +678,18 @@ fn parse_event_envelope(text: &str) -> Result<Option<FrontendEvent>> {
     Ok(map_event(envelope))
 }
 
+fn string_field(payload: &Value, key: &str) -> String {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn optional_string_field(payload: &Value, key: &str) -> Option<String> {
+    payload.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
 fn map_event(envelope: ApiEventEnvelope) -> Option<FrontendEvent> {
     match envelope.event_type.as_str() {
         "state_changed" => {
@@ -733,24 +757,27 @@ fn map_event(envelope: ApiEventEnvelope) -> Option<FrontendEvent> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         }),
-        "token_metrics" => Some(FrontendEvent::TokenMetrics {
-            conversation_id: envelope
-                .payload
-                .get("conversation_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            clear: envelope
-                .payload
-                .get("clear")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+        "generation_started" => Some(FrontendEvent::GenerationStarted {
+            generation_id: string_field(&envelope.payload, "generation_id"),
+            source: string_field(&envelope.payload, "source"),
+            conversation_id: optional_string_field(&envelope.payload, "conversation_id"),
+        }),
+        "generation_metrics" => Some(FrontendEvent::GenerationMetrics {
+            generation_id: string_field(&envelope.payload, "generation_id"),
+            source: string_field(&envelope.payload, "source"),
+            conversation_id: optional_string_field(&envelope.payload, "conversation_id"),
             samples: envelope
                 .payload
                 .get("samples")
                 .cloned()
                 .and_then(|value| serde_json::from_value(value).ok())
                 .unwrap_or_default(),
+        }),
+        "generation_finished" => Some(FrontendEvent::GenerationFinished {
+            generation_id: string_field(&envelope.payload, "generation_id"),
+            source: string_field(&envelope.payload, "source"),
+            conversation_id: optional_string_field(&envelope.payload, "conversation_id"),
+            outcome: string_field(&envelope.payload, "outcome"),
         }),
         "action_taken" => Some(FrontendEvent::ActionTaken {
             action: envelope
@@ -968,6 +995,39 @@ mod tests {
                 assert_eq!(summary.disposition, "observe");
                 assert_eq!(summary.anomaly_count, 2);
                 assert_eq!(summary.salience_count, 3);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parses_generation_metrics_with_source_and_optional_conversation() {
+        let envelope = ApiEventEnvelope {
+            event_type: "generation_metrics".to_string(),
+            payload: serde_json::json!({
+                "generation_id": "gen-1",
+                "source": "heartbeat",
+                "conversation_id": null,
+                "samples": [{
+                    "text": "hello",
+                    "logprob": -0.5,
+                    "entropy": 0.8,
+                    "novelty": 0.4
+                }]
+            }),
+        };
+
+        match map_event(envelope).expect("mapped") {
+            FrontendEvent::GenerationMetrics {
+                generation_id,
+                source,
+                conversation_id,
+                samples,
+            } => {
+                assert_eq!(generation_id, "gen-1");
+                assert_eq!(source, "heartbeat");
+                assert!(conversation_id.is_none());
+                assert_eq!(samples.len(), 1);
             }
             _ => panic!("wrong variant"),
         }

@@ -40,6 +40,6 @@ Renders the activity log and private chat stream for the API-only frontend. Supp
 - Chat content is rendered in a dedicated top-down layout scope so it is not affected by the parent composer's bottom-up anchoring.
 - Chat scroll height now uses the exact remaining parent space (no forced minimum) to avoid overlap when the live tool panel expands.
 - `CollapsingHeader` widgets use `id_salt((event_idx, "reasoning"))` and `(event_idx, step_idx)` tuples so open/closed state persists independently per item even when the event list grows.
-- `FrontendEvent::ApprovalRequest`, `TokenMetrics`, and `CycleStart` have no-op arms in `render_single_event`; approvals are rendered as popups by `app.rs`, token metrics by `token_monitor.rs`, and cycle starts are only used as group boundaries.
+- `FrontendEvent::ApprovalRequest`, generation lifecycle events, and `CycleStart` have no-op arms in `render_single_event`; approvals are rendered as popups by `app.rs`, generations by `token_monitor.rs`, and cycle starts are only used as group boundaries.
 - Streaming preview moved to AFTER the messages loop so the live bubble appears at the bottom of the chat pane, not the top. The empty-state check now also accounts for a live preview being present so the "no messages" placeholder doesn't show during the first streaming response.
 - Audio playback uses a local output stream initialized lazily on first play attempt; media without `auto_play` default to manual playback, and requested auto-play is edge-triggered per file path so clips are not replayed every frame.

@@ -356,6 +356,7 @@ impl AgentApp {
         {
             Ok(_message_id) => {
                 tracing::info!("Sent chat message to backend: {}", content);
+                self.token_monitor.on_human_interaction();
                 self.refresh_conversations();
                 self.refresh_chat_history();
             }
@@ -596,12 +597,44 @@ impl eframe::App for AgentApp {
                     }
                     continue;
                 }
-                FrontendEvent::TokenMetrics {
+                FrontendEvent::GenerationStarted {
+                    generation_id,
+                    source,
                     conversation_id,
-                    clear,
+                } => {
+                    self.token_monitor.generation_started(
+                        generation_id,
+                        source,
+                        conversation_id.as_deref(),
+                    );
+                    continue;
+                }
+                FrontendEvent::GenerationMetrics {
+                    generation_id,
+                    source,
+                    conversation_id,
                     samples,
                 } => {
-                    self.token_monitor.ingest(conversation_id, *clear, samples);
+                    self.token_monitor.ingest_generation(
+                        generation_id,
+                        source,
+                        conversation_id.as_deref(),
+                        samples,
+                    );
+                    continue;
+                }
+                FrontendEvent::GenerationFinished {
+                    generation_id,
+                    source,
+                    conversation_id,
+                    outcome,
+                } => {
+                    self.token_monitor.generation_finished(
+                        generation_id,
+                        source,
+                        conversation_id.as_deref(),
+                        outcome,
+                    );
                     continue;
                 }
                 FrontendEvent::ToolCallProgress {
@@ -784,6 +817,14 @@ impl eframe::App for AgentApp {
                                 egui::RichText::new(format!(
                                     "· {} steps",
                                     self.token_monitor.trace_len()
+                                ))
+                                .small()
+                                .weak(),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "· {} paths",
+                                    self.token_monitor.path_count()
                                 ))
                                 .small()
                                 .weak(),
@@ -1056,6 +1097,9 @@ impl eframe::App for AgentApp {
                         .hint_text("Message Ponderer...")
                         .desired_rows(3),
                 );
+                if response.changed() {
+                    self.token_monitor.on_human_interaction();
+                }
 
                 let send_shortcut = response.has_focus()
                     && ui.input(|i| {

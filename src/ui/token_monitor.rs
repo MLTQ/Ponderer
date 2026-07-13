@@ -1,4 +1,5 @@
 use eframe::egui::{self, Align2, Color32, FontId, Id, Pos2, Rect, Rgba, Stroke, Vec2};
+use std::time::Instant;
 
 use crate::api::TokenMetricSample;
 
@@ -9,11 +10,8 @@ const SPHERE_LONGITUDE_BANDS: usize = 7;
 
 #[derive(Debug, Clone)]
 pub struct TokenMonitorState {
-    conversation_id: Option<String>,
-    trace: Vec<TracePoint>,
-    current_position: Vec3,
-    current_direction: Vec3,
-    sample_index: u64,
+    paths: Vec<TracePath>,
+    retention_mode: RetentionMode,
     last_novelty: f32,
     zoom: f32,
     target_zoom: f32,
@@ -25,6 +23,26 @@ pub struct TokenMonitorState {
     auto_pitch_phase: f32,
     last_frame_time: Option<f64>,
     auto_rotate_resume_at: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetentionMode {
+    UntilHumanMessage,
+    Manual,
+}
+
+#[derive(Debug, Clone)]
+struct TracePath {
+    generation_id: String,
+    source: String,
+    conversation_id: Option<String>,
+    trace: Vec<TracePoint>,
+    current_position: Vec3,
+    current_direction: Vec3,
+    sample_index: u64,
+    created_at: Instant,
+    finished: bool,
+    outcome: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +62,10 @@ struct HoverHit {
     screen_pos: Pos2,
     point: TracePoint,
     index: usize,
+    generation_id: String,
+    source: String,
+    conversation_id: Option<String>,
+    outcome: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -56,11 +78,8 @@ struct Vec3 {
 impl TokenMonitorState {
     pub fn new() -> Self {
         Self {
-            conversation_id: None,
-            trace: Vec::new(),
-            current_position: Vec3::ZERO,
-            current_direction: Vec3::new(0.22, 0.34, 0.91).normalized(),
-            sample_index: 0,
+            paths: Vec::new(),
+            retention_mode: RetentionMode::UntilHumanMessage,
             last_novelty: 0.0,
             zoom: 1.0,
             target_zoom: 1.0,
@@ -75,14 +94,77 @@ impl TokenMonitorState {
         }
     }
 
-    pub fn ingest(&mut self, conversation_id: &str, clear: bool, samples: &[TokenMetricSample]) {
-        if clear || self.conversation_id.as_deref() != Some(conversation_id) {
-            self.reset(conversation_id);
+    pub fn generation_started(
+        &mut self,
+        generation_id: &str,
+        source: &str,
+        conversation_id: Option<&str>,
+    ) {
+        if self
+            .paths
+            .iter()
+            .any(|path| path.generation_id == generation_id)
+        {
+            return;
         }
+        self.paths
+            .push(TracePath::new(generation_id, source, conversation_id));
+    }
 
+    pub fn ingest_generation(
+        &mut self,
+        generation_id: &str,
+        source: &str,
+        conversation_id: Option<&str>,
+        samples: &[TokenMetricSample],
+    ) {
+        self.generation_started(generation_id, source, conversation_id);
+        let path = self
+            .paths
+            .iter_mut()
+            .find(|path| path.generation_id == generation_id)
+            .expect("generation path was just created");
         for sample in samples {
-            self.push_sample(sample);
+            path.push_sample(sample);
+            self.last_novelty = sample.novelty.clamp(0.0, 1.35);
         }
+    }
+
+    pub fn generation_finished(
+        &mut self,
+        generation_id: &str,
+        source: &str,
+        conversation_id: Option<&str>,
+        outcome: &str,
+    ) {
+        self.generation_started(generation_id, source, conversation_id);
+        if let Some(path) = self
+            .paths
+            .iter_mut()
+            .find(|path| path.generation_id == generation_id)
+        {
+            path.finished = true;
+            path.outcome = Some(outcome.to_string());
+        }
+    }
+
+    pub fn on_human_interaction(&mut self) {
+        if self.retention_mode == RetentionMode::UntilHumanMessage {
+            self.clear();
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.paths.clear();
+        self.last_novelty = 0.0;
+    }
+
+    pub fn retention_mode(&self) -> RetentionMode {
+        self.retention_mode
+    }
+
+    pub fn set_retention_mode(&mut self, mode: RetentionMode) {
+        self.retention_mode = mode;
     }
 
     pub fn last_novelty(&self) -> f32 {
@@ -90,16 +172,38 @@ impl TokenMonitorState {
     }
 
     pub fn trace_len(&self) -> usize {
-        self.trace.len()
+        self.paths.iter().map(|path| path.trace.len()).sum()
     }
 
-    fn reset(&mut self, conversation_id: &str) {
-        self.conversation_id = Some(conversation_id.to_string());
-        self.trace.clear();
-        self.current_position = Vec3::ZERO;
-        self.current_direction = Vec3::new(0.22, 0.34, 0.91).normalized();
-        self.sample_index = 0;
-        self.last_novelty = 0.0;
+    pub fn path_count(&self) -> usize {
+        self.paths.len()
+    }
+
+    fn reset_view(&mut self) {
+        self.zoom = 1.0;
+        self.target_zoom = 1.0;
+        self.yaw_offset = 0.0;
+        self.pitch_offset = 0.0;
+        self.rotation_velocity = Vec2::ZERO;
+        self.drag_accum = Vec2::ZERO;
+        self.auto_rotate_resume_at = 0.0;
+    }
+}
+
+impl TracePath {
+    fn new(generation_id: &str, source: &str, conversation_id: Option<&str>) -> Self {
+        Self {
+            generation_id: generation_id.to_string(),
+            source: source.to_string(),
+            conversation_id: conversation_id.map(str::to_string),
+            trace: Vec::new(),
+            current_position: Vec3::ZERO,
+            current_direction: Vec3::new(0.22, 0.34, 0.91).normalized(),
+            sample_index: 0,
+            created_at: Instant::now(),
+            finished: false,
+            outcome: None,
+        }
     }
 
     fn push_sample(&mut self, sample: &TokenMetricSample) {
@@ -123,7 +227,6 @@ impl TokenMonitorState {
 
         self.current_direction = direction;
         self.current_position = self.current_position * center_pull + direction * step_length;
-        self.last_novelty = novelty;
         self.sample_index += 1;
         self.trace.push(TracePoint {
             token: sample.text.clone(),
@@ -140,16 +243,6 @@ impl TokenMonitorState {
             let drain = self.trace.len() - TRACE_LIMIT;
             self.trace.drain(0..drain);
         }
-    }
-
-    fn reset_view(&mut self) {
-        self.zoom = 1.0;
-        self.target_zoom = 1.0;
-        self.yaw_offset = 0.0;
-        self.pitch_offset = 0.0;
-        self.rotation_velocity = Vec2::ZERO;
-        self.drag_accum = Vec2::ZERO;
-        self.auto_rotate_resume_at = 0.0;
     }
 }
 
@@ -204,6 +297,17 @@ impl std::ops::Mul<f32> for Vec3 {
 }
 
 pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new("Retain paths:").small().weak());
+        let mut mode = state.retention_mode();
+        ui.selectable_value(&mut mode, RetentionMode::UntilHumanMessage, "until I type");
+        ui.selectable_value(&mut mode, RetentionMode::Manual, "manual");
+        state.set_retention_mode(mode);
+        if ui.small_button("Clear").clicked() {
+            state.clear();
+        }
+    });
+    ui.add_space(3.0);
     let desired_size = egui::vec2(ui.available_width().max(180.0), 220.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
@@ -280,9 +384,21 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
         egui::show_tooltip_at_pointer(
             ui.ctx(),
             ui.layer_id(),
-            Id::new(("token_monitor_tooltip", hit.index)),
+            Id::new((
+                "token_monitor_tooltip",
+                hit.generation_id.clone(),
+                hit.index,
+            )),
             |ui| {
                 ui.label(format!("Token: {}", render_token_label(&hit.point.token)));
+                ui.label(format!("Source: {}", hit.source));
+                ui.label(format!("Generation: {}", short_id(&hit.generation_id)));
+                if let Some(conversation_id) = &hit.conversation_id {
+                    ui.label(format!("Conversation: {}", short_id(conversation_id)));
+                }
+                if let Some(outcome) = &hit.outcome {
+                    ui.label(format!("Outcome: {}", outcome));
+                }
                 ui.label(format!("Step: #{}", hit.index + 1));
                 ui.label(format!("Novelty: {:.3}", hit.point.novelty));
                 ui.label(format!("Step length: {:.3}", hit.point.step_length));
@@ -372,48 +488,59 @@ fn draw_trace(
     pointer_pos: Option<Pos2>,
 ) -> Option<HoverHit> {
     let mut nearest_hit: Option<(f32, HoverHit)> = None;
-    for (index, segment) in state.trace.windows(2).enumerate() {
-        let age = index as f32 / state.trace.len().max(1) as f32;
-        let from = rotate(segment[0].position, yaw, pitch);
-        let to = rotate(segment[1].position, yaw, pitch);
-        let Some(from_pos) = project(rect, center, radius, from) else {
-            continue;
-        };
-        let Some(to_pos) = project(rect, center, radius, to) else {
-            continue;
-        };
+    let path_count = state.paths.len();
+    for (path_index, path) in state.paths.iter().enumerate() {
+        let recency_rank = path_count.saturating_sub(path_index + 1) as f32;
+        let path_vibrancy = path_vibrancy(recency_rank, path.created_at.elapsed().as_secs_f32());
+        let mut previous = Vec3::ZERO;
+        for (index, point) in path.trace.iter().enumerate() {
+            let age = (index + 1) as f32 / path.trace.len().max(1) as f32;
+            let from = rotate(previous, yaw, pitch);
+            let to = rotate(point.position, yaw, pitch);
+            previous = point.position;
+            let Some(from_pos) = project(rect, center, radius, from) else {
+                continue;
+            };
+            let Some(to_pos) = project(rect, center, radius, to) else {
+                continue;
+            };
 
-        let distance = segment[1].position.length();
-        let normalized_radius = (distance / 1.4).clamp(0.0, 1.0);
-        let color = blend_color(
-            Color32::from_rgb(110, 245, 150),
-            Color32::from_rgb(255, 90, 72),
-            normalized_radius.max(segment[1].novelty.min(1.0) * 0.5),
-        );
-        let alpha = (0.35 + 0.65 * age).clamp(0.0, 1.0);
-        let depth_boost = ((to.z + 1.5) / 3.0).clamp(0.5, 1.0);
-        let stroke = Stroke::new(
-            1.15 + 1.7 * segment[1].emphasis,
-            Color32::from(Rgba::from(color) * (alpha * depth_boost)),
-        );
-        painter.line_segment([from_pos, to_pos], stroke);
+            let distance = point.position.length();
+            let normalized_radius = (distance / 1.4).clamp(0.0, 1.0);
+            let color = blend_color(
+                Color32::from_rgb(110, 245, 150),
+                Color32::from_rgb(255, 90, 72),
+                normalized_radius.max(point.novelty.min(1.0) * 0.5),
+            );
+            let alpha = ((0.35 + 0.65 * age) * path_vibrancy).clamp(0.0, 1.0);
+            let depth_boost = ((to.z + 1.5) / 3.0).clamp(0.5, 1.0);
+            let stroke = Stroke::new(
+                (1.15 + 1.7 * point.emphasis) * (0.72 + 0.28 * path_vibrancy),
+                Color32::from(Rgba::from(color) * (alpha * depth_boost)),
+            );
+            painter.line_segment([from_pos, to_pos], stroke);
 
-        if let Some(pointer_pos) = pointer_pos {
-            let distance = pointer_pos.distance(to_pos);
-            if distance <= 12.0
-                && nearest_hit
-                    .as_ref()
-                    .map(|(best_distance, _)| distance < *best_distance)
-                    .unwrap_or(true)
-            {
-                nearest_hit = Some((
-                    distance,
-                    HoverHit {
-                        screen_pos: to_pos,
-                        point: segment[1].clone(),
-                        index: index + 1,
-                    },
-                ));
+            if let Some(pointer_pos) = pointer_pos {
+                let distance = pointer_pos.distance(to_pos);
+                if distance <= 12.0
+                    && nearest_hit
+                        .as_ref()
+                        .map(|(best_distance, _)| distance < *best_distance)
+                        .unwrap_or(true)
+                {
+                    nearest_hit = Some((
+                        distance,
+                        HoverHit {
+                            screen_pos: to_pos,
+                            point: point.clone(),
+                            index,
+                            generation_id: path.generation_id.clone(),
+                            source: path.source.clone(),
+                            conversation_id: path.conversation_id.clone(),
+                            outcome: path.outcome.clone(),
+                        },
+                    ));
+                }
             }
         }
     }
@@ -574,4 +701,62 @@ fn render_token_label(token: &str) -> String {
         return "\" \"".to_string();
     }
     format!("{token:?}")
+}
+
+fn short_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
+fn path_vibrancy(recency_rank: f32, age_seconds: f32) -> f32 {
+    let recency_fade = 0.72_f32.powf(recency_rank);
+    let time_fade = 2.0_f32.powf(-(age_seconds / 240.0));
+    (0.12 + 0.88 * recency_fade * time_fade).clamp(0.08, 1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(text: &str, novelty: f32) -> TokenMetricSample {
+        TokenMetricSample {
+            text: text.to_string(),
+            logprob: None,
+            entropy: None,
+            novelty,
+        }
+    }
+
+    #[test]
+    fn each_generation_gets_an_independent_center_origin_path() {
+        let mut state = TokenMonitorState::new();
+        state.ingest_generation("one", "operator_chat", Some("chat"), &[sample("a", 0.2)]);
+        state.ingest_generation("two", "heartbeat", None, &[sample("b", 0.7)]);
+
+        assert_eq!(state.path_count(), 2);
+        assert_eq!(state.trace_len(), 2);
+        assert_eq!(state.paths[0].sample_index, 1);
+        assert_eq!(state.paths[1].sample_index, 1);
+        assert!(state.paths.iter().all(|path| path.trace[0].radius > 0.0));
+    }
+
+    #[test]
+    fn human_interaction_clear_is_toggleable_and_manual_clear_always_works() {
+        let mut state = TokenMonitorState::new();
+        state.generation_started("one", "operator_chat", None);
+        state.on_human_interaction();
+        assert_eq!(state.path_count(), 0);
+
+        state.set_retention_mode(RetentionMode::Manual);
+        state.generation_started("two", "heartbeat", None);
+        state.on_human_interaction();
+        assert_eq!(state.path_count(), 1);
+        state.clear();
+        assert_eq!(state.path_count(), 0);
+    }
+
+    #[test]
+    fn recent_paths_are_more_vibrant_than_old_paths() {
+        assert!(path_vibrancy(0.0, 1.0) > path_vibrancy(1.0, 1.0));
+        assert!(path_vibrancy(0.0, 1.0) > path_vibrancy(0.0, 300.0));
+    }
 }

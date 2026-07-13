@@ -87,4 +87,4 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - Plugin manifest/settings DTOs are intentionally not redefined here; the backend crate is their single source of truth.
 - Plugin runtime status DTOs are also re-exported from `ponderer_backend::plugin_contract`; the desktop can query them without schema duplication.
 - `ApiClient::get_turn_prompt` fetches `/v1/turns/:id/prompt` for per-message “View Prompt” inspection (context prompt + optional stored system prompt).
-- WS event mapping now includes `token_metrics`, which is ignored by the activity log but consumed by the live token monitor in the Mind sidebar.
+- WS event mapping now decodes `generation_started`, `generation_metrics`, and `generation_finished`, preserving generation identity, source, optional conversation, samples, and outcome for the live monitor.

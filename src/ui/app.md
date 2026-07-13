@@ -61,7 +61,7 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - The app is no longer wired to in-process `Agent`/`AgentDatabase`/`flume` backend channels.
 - WS event stream runs continuously with reconnect; polling refresh every 2s is retained for list/history/status consistency.
 - Activity panel is now visible by default so autonomous progress and wake/error telemetry are immediately visible without extra clicks.
-- `FrontendEvent::TokenMetrics` is consumed directly by `AgentApp` and not pushed into the activity log, since the wireframe monitor is the primary presentation for those samples.
+- Generation lifecycle events are consumed directly by `AgentApp` and not pushed into the activity log. Editing the human composer (and successful submission as a fallback) invokes the monitor's configured clear-on-interaction behavior.
 - Main chat surface now uses fixed vertical regions (chat history, live tool output, composer) to prevent tool/output panels from overlapping chat bubbles or pushing the composer off-screen.
 - Sidebar helper text, live tool previews, and approval reasons insert soft line breaks into long unbroken tokens so the Mind panel can stay narrow even when tools emit raw URLs.
 - UI-level API failures are surfaced in the activity log as `FrontendEvent::Error` entries.

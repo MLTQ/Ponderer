@@ -29,7 +29,7 @@ Renders the live token-status monitor in the Mind sidebar. It turns streamed tok
 
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
-| `app.rs` | `TokenMonitorState::new`, `ingest`, `last_novelty`, `trace_len`, and `render` remain available | Renaming state/render entry points |
+| `app.rs` | Generation lifecycle methods, retention controls, summary counters, and `render` remain available | Renaming state/render entry points |
 | `api.rs` | `TokenMetricSample` continues to expose `text`, optional `logprob`/`entropy`, and `novelty` | Changing sample field names or semantics |
 
 ## Notes
@@ -37,3 +37,5 @@ Renders the live token-status monitor in the Mind sidebar. It turns streamed tok
 - A mild center pull keeps boring runs near the origin while still letting higher-novelty segments escape beyond the unit sphere.
 - The sphere is decorative but data-driven: color shifts from green toward red as the trail moves farther from the center.
 - Zoom, manual orbit offsets, and autorotation cooldown are local UI state on `TokenMonitorState`, so interaction changes the view without disturbing the underlying trace.
+- Every generation owns an independent center-origin path. Paths persist until the next successful human submission by default, or indefinitely in manual mode; the Clear button always works.
+- Rendering combines a four-minute time half-life with generation recency so older paths slowly desaturate while the newest path remains vivid. Fading never deletes retained data.

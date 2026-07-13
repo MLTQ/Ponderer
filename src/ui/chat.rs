@@ -439,7 +439,9 @@ fn render_single_event(
         }
         FrontendEvent::StateChanged(_)
         | FrontendEvent::ChatStreaming { .. }
-        | FrontendEvent::TokenMetrics { .. }
+        | FrontendEvent::GenerationStarted { .. }
+        | FrontendEvent::GenerationMetrics { .. }
+        | FrontendEvent::GenerationFinished { .. }
         | FrontendEvent::ApprovalRequest { .. }
         | FrontendEvent::CycleStart { .. } => {
             // Handled by caller (state in header, streaming in chat pane,
