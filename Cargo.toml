@@ -40,6 +40,7 @@ flume = "0.11"
 
 # Directories
 dirs = "5.0"
+fs2 = "0.4"
 
 # Image processing for character cards
 image = "0.25"

@@ -647,10 +647,13 @@ impl SettingsPanel {
                 egui::RichText::new(format!(
                     "{} configured",
                     self.scheduled_jobs.len() + self.pending_new_scheduled_jobs.len()
-                        - self.pending_deleted_job_ids.len().min(self.scheduled_jobs.len())
+                        - self
+                            .pending_deleted_job_ids
+                            .len()
+                            .min(self.scheduled_jobs.len())
                 ))
-                    .small()
-                    .weak(),
+                .small()
+                .weak(),
             );
         });
         ui.add_space(8.0);
@@ -779,12 +782,7 @@ impl SettingsPanel {
                 let editor = self.editor_for_pending_job(&draft.local_id);
                 ui.group(|ui| {
                     ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("new")
-                                .weak()
-                                .small()
-                                .italics(),
-                        );
+                        ui.label(egui::RichText::new("new").weak().small().italics());
                         ui.label(
                             egui::RichText::new("Will be created on Save & Apply")
                                 .small()
@@ -853,15 +851,16 @@ impl SettingsPanel {
                     Some("Name and prompt are required to create a schedule.".to_string());
             } else {
                 self.scheduled_jobs_error = None;
-                self.pending_new_scheduled_jobs.push(PendingScheduledJobDraft {
-                    local_id: format!("new-schedule-{}", self.next_local_scheduled_job_id),
-                    editor: ScheduledJobEditor {
-                        name,
-                        prompt,
-                        interval_minutes: self.new_job_interval_minutes.clamp(1, 10080),
-                        enabled: self.new_job_enabled,
-                    },
-                });
+                self.pending_new_scheduled_jobs
+                    .push(PendingScheduledJobDraft {
+                        local_id: format!("new-schedule-{}", self.next_local_scheduled_job_id),
+                        editor: ScheduledJobEditor {
+                            name,
+                            prompt,
+                            interval_minutes: self.new_job_interval_minutes.clamp(1, 10080),
+                            enabled: self.new_job_enabled,
+                        },
+                    });
                 self.next_local_scheduled_job_id += 1;
                 self.new_job_name.clear();
                 self.new_job_prompt.clear();

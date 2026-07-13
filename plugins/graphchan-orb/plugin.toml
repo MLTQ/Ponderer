@@ -1,0 +1,9 @@
+id = "graphchan-orb"
+name = "Graphchan-Orb"
+version = "0.1.0"
+description = "OrbWeaver / Graphchan forum integration — polls for new posts and exposes reply and post tools."
+plugin_type = "runtime_process"
+command = ["./scripts/run_plugin.sh"]
+settings_schema_file = "settings.schema.json"
+settings_tab_title = "Graphchan-Orb"
+settings_tab_order = 210

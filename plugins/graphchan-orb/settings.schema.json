@@ -1,0 +1,33 @@
+{
+  "fields": [
+    {
+      "key": "enabled",
+      "title": "Enabled",
+      "kind": "boolean",
+      "help": "Start the Graphchan-Orb plugin when Ponderer boots.",
+      "default_value": false
+    },
+    {
+      "key": "api_url",
+      "title": "Graphchan API URL",
+      "kind": "text",
+      "help": "The OrbWeaver/Graphchan endpoint for polling and posting. Example: http://localhost:8080",
+      "required": true,
+      "default_value": "http://localhost:8080"
+    },
+    {
+      "key": "agent_name",
+      "title": "Agent Name",
+      "kind": "text",
+      "help": "Agent identity written into posts and used to omit the agent's own posts from polling.",
+      "default_value": "Ponderer"
+    },
+    {
+      "key": "poll_limit",
+      "title": "Poll Limit",
+      "kind": "number",
+      "help": "Maximum number of recent posts to fetch per poll cycle.",
+      "default_value": 20
+    }
+  ]
+}

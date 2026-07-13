@@ -6,8 +6,16 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 ## Components
 
 ### `ApiClient`
-- **Does**: Stores backend base URL/token, performs REST requests for config/chat/agent control, and maintains WS event streaming with reconnect.
+- **Does**: Stores backend base URL/token, performs bounded REST requests for config/chat/agent control, checks backend health for launcher discovery, and maintains WS event streaming with reconnect.
 - **Interacts with**: `ponderer_backend` REST/WS routes under `/v1`.
+
+### `ApiClient::new_local`
+- **Does**: Builds the client used for discovered or newly launched loopback backends with ambient HTTP proxies disabled, preventing the persisted local bearer token from being forwarded through a proxy.
+- **Interacts with**: `main.rs` persistent backend discovery and launch paths.
+
+### `ApiClient::health`
+- **Does**: Requires an HTTP-successful, decodable Ponderer health payload whose state is either `ok` or `degraded`.
+- **Interacts with**: backend `/v1/health` and desktop discovery.
 
 ### Chat DTOs (`ChatConversation`, `ChatMessage`, `ChatTurnPhase`)
 - **Does**: Frontend-side models for chat list/history rendering.
@@ -60,11 +68,14 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
 | `ui/app.rs` | `ApiClient` exposes config/chat/status/pause/stop methods and event streaming | Renaming/removing API methods |
+| `main.rs` | `ApiClient::health` validates a discovered persistent local backend before reuse | Changing health/auth behavior |
 | `ui/chat.rs` | `FrontendEvent` variants remain stable for rendering | Removing/renaming event variants |
 | Backend API | Routes and payload shapes under `/v1` match client decoding | Changing endpoint paths or schema fields |
 
 ## Notes
 - Backend URL defaults to `http://127.0.0.1:8787` (`PONDERER_BACKEND_URL` override).
+- REST calls use a 15-second client timeout so a dead backend cannot freeze the GUI render path indefinitely.
+- Persistent loopback clients bypass ambient proxy settings; explicitly configured external backend clients retain normal proxy behavior.
 - Bearer token comes from `PONDERER_BACKEND_TOKEN`; if absent, requests run unauthenticated (useful only when backend auth mode is disabled).
 - WS URL is derived from HTTP base URL (`http -> ws`, `https -> wss`).
 - Enum decoding for chat/runtime state is compatibility-tolerant (`snake_case` plus legacy PascalCase aliases) to survive backend/frontend schema drift during upgrades.

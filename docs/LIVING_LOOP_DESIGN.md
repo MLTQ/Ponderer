@@ -6,10 +6,12 @@
 
 This document describes the "Living Loop" architecture—a fundamental redesign of Ponderer's core loop to transform it from a reactive polling system into something that feels like a persistent presence with its own tempo, concerns, and inner life.
 
-**Status:** Design Phase  
+**Status:** Implemented; current runtime differences and hardening status are documented in `LIVING_LOOP_STATUS.md`
 **Author:** Claude + Max  
 **Date:** 2026-02-15  
 **Related Issues:** Ponderer-cpf (parent epic)
+
+> This document preserves the motivating design and some historical pseudocode. `LIVING_LOOP_STATUS.md` is the authoritative map of current data flow, defaults, persistence, and authority boundaries.
 
 ---
 

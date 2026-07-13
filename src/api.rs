@@ -282,6 +282,11 @@ struct StopResponse {
     stopped: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct HealthResponse {
+    status: String,
+}
+
 #[derive(Clone)]
 pub struct ApiClient {
     http: reqwest::Client,
@@ -303,11 +308,32 @@ impl ApiClient {
     }
 
     pub fn new(base_url: String, token: Option<String>) -> Self {
+        Self::build(base_url, token, false)
+    }
+
+    pub fn new_local(base_url: String, token: Option<String>) -> Self {
+        Self::build(base_url, token, true)
+    }
+
+    fn build(base_url: String, token: Option<String>, bypass_proxy: bool) -> Self {
         let normalized_base = normalize_base_url(&base_url);
         let ws_url = normalize_ws_url(&normalized_base);
 
+        let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(15));
+        if bypass_proxy {
+            builder = builder.no_proxy();
+        }
+        let http = builder.build().unwrap_or_else(|error| {
+            tracing::warn!("Failed to build bounded API client: {}", error);
+            reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .expect("bounded no-proxy API client")
+        });
+
         Self {
-            http: reqwest::Client::new(),
+            http,
             base_url: normalized_base,
             ws_url,
             token,
@@ -316,6 +342,19 @@ impl ApiClient {
 
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    pub async fn health(&self) -> Result<()> {
+        let response = self
+            .request(reqwest::Method::GET, "/v1/health")
+            .send()
+            .await?
+            .error_for_status()
+            .context("GET /v1/health failed")?
+            .json::<HealthResponse>()
+            .await
+            .context("Failed to decode backend health response")?;
+        validate_health_status(&response.status)
     }
 
     pub async fn get_config(&self) -> Result<crate::config::AgentConfig> {
@@ -918,6 +957,13 @@ fn normalize_ws_url(base_http_url: &str) -> String {
     }
 }
 
+fn validate_health_status(status: &str) -> Result<()> {
+    match status {
+        "ok" | "degraded" => Ok(()),
+        other => anyhow::bail!("Backend reported unrecognized health status '{other}'"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -987,6 +1033,13 @@ mod tests {
     fn api_client_from_env_picks_defaults() {
         let client = ApiClient::new("http://127.0.0.1:8787/".to_string(), None);
         assert_eq!(client.base_url(), "http://127.0.0.1:8787");
+    }
+
+    #[test]
+    fn health_accepts_running_and_degraded_backend_states() {
+        assert!(validate_health_status("ok").is_ok());
+        assert!(validate_health_status("degraded").is_ok());
+        assert!(validate_health_status("unknown").is_err());
     }
 
     #[test]

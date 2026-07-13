@@ -256,8 +256,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
         state.auto_pitch_phase += delta_time * 0.31;
     }
     let yaw = state.auto_yaw + state.yaw_offset;
-    let pitch =
-        (0.48 + 0.09 * state.auto_pitch_phase.sin() + state.pitch_offset).clamp(-1.1, 1.1);
+    let pitch = (0.48 + 0.09 * state.auto_pitch_phase.sin() + state.pitch_offset).clamp(-1.1, 1.1);
     let sphere_radius = rect.width().min(rect.height()) * 0.34 * state.zoom;
     let center = rect.center();
 
@@ -283,17 +282,17 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
             ui.layer_id(),
             Id::new(("token_monitor_tooltip", hit.index)),
             |ui| {
-            ui.label(format!("Token: {}", render_token_label(&hit.point.token)));
-            ui.label(format!("Step: #{}", hit.index + 1));
-            ui.label(format!("Novelty: {:.3}", hit.point.novelty));
-            ui.label(format!("Step length: {:.3}", hit.point.step_length));
-            ui.label(format!("Radius: {:.3}", hit.point.radius));
-            if let Some(logprob) = hit.point.logprob {
-                ui.label(format!("Logprob: {:.3}", logprob));
-            }
-            if let Some(entropy) = hit.point.entropy {
-                ui.label(format!("Entropy: {:.3}", entropy));
-            }
+                ui.label(format!("Token: {}", render_token_label(&hit.point.token)));
+                ui.label(format!("Step: #{}", hit.index + 1));
+                ui.label(format!("Novelty: {:.3}", hit.point.novelty));
+                ui.label(format!("Step length: {:.3}", hit.point.step_length));
+                ui.label(format!("Radius: {:.3}", hit.point.radius));
+                if let Some(logprob) = hit.point.logprob {
+                    ui.label(format!("Logprob: {:.3}", logprob));
+                }
+                if let Some(entropy) = hit.point.entropy {
+                    ui.label(format!("Entropy: {:.3}", entropy));
+                }
             },
         );
     }
@@ -332,17 +331,23 @@ fn draw_wireframe_sphere(
         let mut points = Vec::with_capacity(SPHERE_SEGMENTS + 1);
         for step in 0..=SPHERE_SEGMENTS {
             let angle = std::f32::consts::TAU * step as f32 / SPHERE_SEGMENTS as f32;
-            points.push(Vec3::new(ring_radius * angle.cos(), y, ring_radius * angle.sin()));
+            points.push(Vec3::new(
+                ring_radius * angle.cos(),
+                y,
+                ring_radius * angle.sin(),
+            ));
         }
-        draw_projected_polyline(painter, rect, center, radius, yaw, pitch, &points, base_color, 1.0);
+        draw_projected_polyline(
+            painter, rect, center, radius, yaw, pitch, &points, base_color, 1.0,
+        );
     }
 
     for band in 0..SPHERE_LONGITUDE_BANDS {
         let longitude = std::f32::consts::TAU * band as f32 / SPHERE_LONGITUDE_BANDS as f32;
         let mut points = Vec::with_capacity(SPHERE_SEGMENTS + 1);
         for step in 0..=SPHERE_SEGMENTS {
-            let angle =
-                std::f32::consts::PI * step as f32 / SPHERE_SEGMENTS as f32 - std::f32::consts::FRAC_PI_2;
+            let angle = std::f32::consts::PI * step as f32 / SPHERE_SEGMENTS as f32
+                - std::f32::consts::FRAC_PI_2;
             let ring_radius = angle.cos();
             points.push(Vec3::new(
                 ring_radius * longitude.cos(),
@@ -350,7 +355,9 @@ fn draw_wireframe_sphere(
                 ring_radius * longitude.sin(),
             ));
         }
-        draw_projected_polyline(painter, rect, center, radius, yaw, pitch, &points, base_color, 1.0);
+        draw_projected_polyline(
+            painter, rect, center, radius, yaw, pitch, &points, base_color, 1.0,
+        );
     }
 }
 

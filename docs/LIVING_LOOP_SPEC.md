@@ -1,5 +1,7 @@
 # Living Loop Technical Specification
 
+> Historical specification: use `LIVING_LOOP_STATUS.md` for the implemented runtime, durable intention/Dream flow, current defaults, and security boundaries. Pseudocode and rollout notes below describe the original staged design.
+
 **Version:** 0.1.0  
 **Status:** Draft  
 **Last Updated:** 2026-02-15

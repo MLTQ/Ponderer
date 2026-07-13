@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphchan-orb"
+version = "0.1.0"
+description = "OrbWeaver / Graphchan forum plugin for Ponderer"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+]
+
+[tool.setuptools]
+packages = ["graphchan_orb"]

@@ -10,7 +10,7 @@ The "Living Loop" is a fundamental redesign of Ponderer's core loop to transform
 |----------|---------|
 | [LIVING_LOOP_DESIGN.md](./LIVING_LOOP_DESIGN.md) | High-level architecture and philosophy |
 | [LIVING_LOOP_SPEC.md](./LIVING_LOOP_SPEC.md) | Technical specification with code structures |
-| [LIVING_LOOP_STATUS.md](./LIVING_LOOP_STATUS.md) | Implementation status and transition plan |
+| [LIVING_LOOP_STATUS.md](./LIVING_LOOP_STATUS.md) | Authoritative current data-flow map, persistence/authority boundaries, validation, and follow-up |
 | [../scripts/validate_living_loop_acceptance.md](../scripts/validate_living_loop_acceptance.md) | Deterministic living-loop acceptance baseline (standalone backend) |
 
 ### Backend Split / API-First
