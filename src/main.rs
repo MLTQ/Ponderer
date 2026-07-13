@@ -398,6 +398,10 @@ fn validate_backend_discovery(discovery: &BackendDiscovery) -> Result<SocketAddr
 }
 
 fn api_is_healthy(client: &ApiClient) -> bool {
+    api_is_healthy_with_timeout(client, Duration::from_secs(2))
+}
+
+fn api_is_healthy_with_timeout(client: &ApiClient, timeout: Duration) -> bool {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -408,12 +412,11 @@ fn api_is_healthy(client: &ApiClient) -> bool {
             return false;
         }
     };
-    runtime
-        .block_on(tokio::time::timeout(
-            Duration::from_secs(2),
-            client.health(),
-        ))
-        .is_ok_and(|result| result.is_ok())
+    runtime.block_on(async {
+        tokio::time::timeout(timeout, client.health())
+            .await
+            .is_ok_and(|result| result.is_ok())
+    })
 }
 
 fn backend_discovery_path() -> PathBuf {
@@ -622,6 +625,20 @@ mod tests {
         ] {
             assert!(validate_backend_discovery(&invalid).is_err(), "{invalid:?}");
         }
+    }
+
+    #[test]
+    fn health_probe_does_not_require_an_ambient_tokio_reactor() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = ApiClient::new_local(
+            format!("http://{}", listener.local_addr().unwrap()),
+            Some("secret".to_string()),
+        );
+
+        assert!(!api_is_healthy_with_timeout(
+            &client,
+            Duration::from_millis(20)
+        ));
     }
 
     #[test]

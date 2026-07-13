@@ -27,7 +27,7 @@ Desktop launcher entry point. Supports:
 - **Does**: Stores a private `ponderer_backend.json` endpoint/token/PID record beside the primary config, validates its loopback-only URL and authenticated health payload, removes unreachable stale records, and reuses the living backend on later UI launches.
 - **Interacts with**: `ApiClient::health`, `AgentConfig::config_path`, `PONDERER_BACKEND_DISCOVERY_FILE`.
 - **Rationale**: The companion's lifetime should not be coupled to whether its window is open.
-- **Failure behavior**: Discovery is replaced through a uniquely named private temporary file; if socket readiness, authenticated health validation, or persistence fails, the just-launched backend is stopped instead of being left undiscoverable. A reachable endpoint that fails authenticated health blocks duplicate launch rather than being treated as stale.
+- **Failure behavior**: Discovery is replaced through a uniquely named private temporary file; if socket readiness, authenticated health validation, or persistence fails, the just-launched backend is stopped instead of being left undiscoverable. A reachable endpoint that fails authenticated health blocks duplicate launch rather than being treated as stale. The synchronous health probe creates its Tokio timeout inside its private runtime context, so desktop bootstrap never depends on an ambient reactor.
 
 ### Backend launch lease
 - **Does**: Serializes the final discovery check and child launch across desktop processes with an OS-backed exclusive file lock. Contenders poll discovery while waiting and reuse the winner's backend as soon as it is published.
