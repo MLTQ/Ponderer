@@ -358,7 +358,7 @@ impl SettingsPanel {
         );
         ui.label(
             egui::RichText::new(
-                "Foreground continuation follows turn_control; limit is optional safety cap.",
+                "Foreground continuation follows turn_control; disabling this limit still keeps a fixed emergency ceiling.",
             )
             .small()
             .weak(),
@@ -377,7 +377,7 @@ impl SettingsPanel {
         );
         ui.label(
             egui::RichText::new(
-                "Background continuation follows turn_control; limit is optional safety cap.",
+                "Background continuation follows turn_control; disabling this limit still keeps a fixed emergency ceiling.",
             )
             .small()
             .weak(),
