@@ -2,7 +2,7 @@ mod api;
 mod ui;
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -90,9 +90,8 @@ fn run_desktop_mode() -> Result<()> {
     );
 
     if let Some(mut backend) = backend_process {
-        if backend_is_ui_scoped() {
+        if backend.ui_scoped {
             backend.shutdown();
-            remove_discovery_if_owned(backend.child.id());
         } else {
             tracing::info!(
                 "Leaving local backend {} running after the UI closes",
@@ -115,6 +114,8 @@ fn run_backend_only() -> Result<()> {
                 .unwrap_or_else(|_| EnvFilter::new("info,ponderer_backend=debug")),
         )
         .init();
+
+    monitor_ui_parent_pipe();
 
     let config = AgentConfig::load();
     let (event_tx, event_rx) = unbounded();
@@ -149,6 +150,7 @@ struct BackendProcess {
     child: Child,
     base_url: String,
     token: String,
+    ui_scoped: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -185,17 +187,29 @@ const BACKEND_LAUNCH_LEASE_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
 impl BackendProcess {
     fn shutdown(&mut self) {
-        if let Ok(Some(_)) = self.child.try_wait() {
-            return;
+        let pid = self.child.id();
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        remove_discovery_if_owned(pid);
+    }
+}
+
+impl Drop for BackendProcess {
+    fn drop(&mut self) {
+        if self.ui_scoped {
+            self.shutdown();
+        }
     }
 }
 
 fn connect_or_launch_local_backend() -> Result<(ApiClient, Option<BackendProcess>)> {
     if let Some(client) = connect_to_discovered_backend()? {
-        tracing::info!("Reusing persistent local backend at {}", client.base_url());
+        tracing::info!(
+            "Reusing authenticated local backend at {}",
+            client.base_url()
+        );
         return Ok((client, None));
     }
 
@@ -213,7 +227,10 @@ fn connect_or_launch_local_backend() -> Result<(ApiClient, Option<BackendProcess
     // Another launcher can finish between our optimistic discovery check and
     // lease acquisition. Recheck while holding the lease before spawning.
     if let Some(client) = connect_to_discovered_backend()? {
-        tracing::info!("Reusing persistent local backend at {}", client.base_url());
+        tracing::info!(
+            "Reusing authenticated local backend at {}",
+            client.base_url()
+        );
         return Ok((client, None));
     }
 
@@ -231,10 +248,17 @@ fn connect_or_launch_local_backend() -> Result<(ApiClient, Option<BackendProcess
         launched.shutdown();
         return Err(error).context("failed to persist local backend discovery");
     }
-    tracing::info!(
-        "Autostarted persistent local backend at {}",
-        launched.base_url
-    );
+    if launched.ui_scoped {
+        tracing::info!(
+            "Autostarted UI-owned local backend at {}",
+            launched.base_url
+        );
+    } else {
+        tracing::info!(
+            "Autostarted persistent local backend at {}",
+            launched.base_url
+        );
+    }
     Ok((client, Some(launched)))
 }
 
@@ -513,10 +537,52 @@ fn remove_discovery_if_owned(pid: u32) {
 }
 
 fn backend_is_ui_scoped() -> bool {
-    std::env::var("PONDERER_BACKEND_LIFETIME")
+    let value = std::env::var("PONDERER_BACKEND_LIFETIME").ok();
+    if value.as_deref().is_some_and(|value| {
+        !value.trim().is_empty()
+            && !value.trim().eq_ignore_ascii_case("ui")
+            && !value.trim().eq_ignore_ascii_case("persistent")
+    }) {
+        tracing::warn!(
+            "Unknown PONDERER_BACKEND_LIFETIME value {:?}; using safe UI-owned lifetime",
+            value.as_deref().unwrap_or_default()
+        );
+    }
+    backend_lifetime_value_is_ui_scoped(value.as_deref())
+}
+
+fn backend_lifetime_value_is_ui_scoped(value: Option<&str>) -> bool {
+    !value.is_some_and(|value| value.trim().eq_ignore_ascii_case("persistent"))
+}
+
+fn monitor_ui_parent_pipe() {
+    let enabled = std::env::var("PONDERER_BACKEND_PARENT_PIPE")
         .ok()
-        .map(|value| value.trim().eq_ignore_ascii_case("ui"))
-        .unwrap_or(false)
+        .is_some_and(|value| value.trim() == "1");
+    if !enabled {
+        return;
+    }
+
+    std::thread::spawn(|| {
+        let mut input = std::io::stdin();
+        let mut buffer = [0_u8; 1];
+        loop {
+            match input.read(&mut buffer) {
+                Ok(0) => {
+                    tracing::info!("Frontend ownership pipe closed; terminating backend");
+                    std::process::exit(0);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "Frontend ownership pipe failed ({}); terminating backend",
+                        error
+                    );
+                    std::process::exit(0);
+                }
+            }
+        }
+    });
 }
 
 fn launch_backend_process() -> Result<BackendProcess> {
@@ -535,13 +601,19 @@ fn launch_backend_process() -> Result<BackendProcess> {
         .env("PONDERER_BACKEND_BIND", bind_addr.to_string())
         .env("PONDERER_BACKEND_AUTH_MODE", "required")
         .env("PONDERER_BACKEND_TOKEN", token.clone())
-        .current_dir(current_dir)
-        .stdin(Stdio::null());
+        .current_dir(current_dir);
 
     if ui_scoped {
-        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        command
+            .env("PONDERER_BACKEND_PARENT_PIPE", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
     } else {
-        command.stdout(Stdio::null()).stderr(Stdio::null());
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -561,6 +633,7 @@ fn launch_backend_process() -> Result<BackendProcess> {
         child,
         base_url: format!("http://{}", bind_addr),
         token,
+        ui_scoped,
     })
 }
 
@@ -639,6 +712,14 @@ mod tests {
             &client,
             Duration::from_millis(20)
         ));
+    }
+
+    #[test]
+    fn backend_lifetime_is_ui_owned_unless_persistence_is_explicit() {
+        for value in [None, Some(""), Some("ui"), Some("UI"), Some("unexpected")] {
+            assert!(backend_lifetime_value_is_ui_scoped(value));
+        }
+        assert!(!backend_lifetime_value_is_ui_scoped(Some(" persistent ")));
     }
 
     #[test]
