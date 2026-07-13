@@ -11,7 +11,7 @@
       "key": "api_url",
       "title": "Graphchan API URL",
       "kind": "text",
-      "help": "The OrbWeaver/Graphchan endpoint for polling and posting. Example: http://localhost:8080",
+      "help": "HTTP(S) Graphchan endpoint for polling and posting. Embedded credentials, query strings, and fragments are not accepted. Example: http://localhost:8080",
       "required": true,
       "default_value": "http://localhost:8080"
     },

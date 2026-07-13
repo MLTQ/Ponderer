@@ -34,6 +34,8 @@ struct ChatMediaDetail {
     mime_type: Option<String>,
     #[serde(default)]
     source: Option<String>,
+    #[serde(default)]
+    auto_play: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -452,7 +454,6 @@ pub fn render_private_chat(
     messages: &[ChatMessage],
     streaming_preview: Option<&str>,
     media_cache: &mut ChatMediaCache,
-    auto_play_generated_audio: bool,
 ) -> Option<String> {
     let mut requested_prompt_turn_id: Option<String> = None;
     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
@@ -513,7 +514,6 @@ pub fn render_private_chat(
                                 is_operator,
                                 bubble_width,
                                 media_cache,
-                                auto_play_generated_audio,
                             );
                             if prompt_clicked {
                                 if let Some(turn_id) = msg.turn_id.as_deref() {
@@ -566,7 +566,6 @@ fn render_chat_message_bubble(
     is_operator: bool,
     max_bubble_width: f32,
     media_cache: &mut ChatMediaCache,
-    auto_play_generated_audio: bool,
 ) -> bool {
     let mut prompt_clicked = false;
     ui.group(|ui| {
@@ -618,7 +617,6 @@ fn render_chat_message_bubble(
                 &payload.media_details,
                 (inner_width - 12.0).max(80.0),
                 media_cache,
-                auto_play_generated_audio,
             );
         }
 
@@ -662,7 +660,6 @@ fn render_media_panel(
     media_details: &[ChatMediaDetail],
     max_width: f32,
     media_cache: &mut ChatMediaCache,
-    auto_play_generated_audio: bool,
 ) {
     media_cache.refresh_audio_state();
     ui.label(RichText::new("Media").small().color(Color32::LIGHT_GREEN));
@@ -701,12 +698,7 @@ fn render_media_panel(
                     }
                 }
                 "audio" => {
-                    let source = media.source.as_deref().unwrap_or_default();
-                    let is_voice_orb_audio = source.eq_ignore_ascii_case("voice-orb")
-                        || source.eq_ignore_ascii_case("voice_orb")
-                        || filename.starts_with("voice_orb_");
-
-                    if auto_play_generated_audio && is_voice_orb_audio {
+                    if media.auto_play {
                         media_cache.maybe_auto_play_audio(&media.path);
                     }
 
@@ -1152,12 +1144,21 @@ mod tests {
 
     #[test]
     fn parses_embedded_media_block() {
-        let content = "Generated.\n\n[media]\n[{\"path\":\"/tmp/a.png\",\"media_kind\":\"image\",\"mime_type\":\"image/png\",\"source\":\"generate_comfy_media\"}]\n[/media]";
+        let content = "Generated.\n\n[media]\n[{\"path\":\"/tmp/a.png\",\"media_kind\":\"image\",\"mime_type\":\"image/png\",\"source\":\"fixture.generator\"}]\n[/media]";
         let payload = parse_chat_payload(content);
         assert_eq!(payload.display_content, "Generated.");
         assert_eq!(payload.media_details.len(), 1);
         assert_eq!(payload.media_details[0].path, "/tmp/a.png");
         assert_eq!(payload.media_details[0].media_kind, "image");
+        assert!(!payload.media_details[0].auto_play);
+    }
+
+    #[test]
+    fn parses_generic_media_auto_play_flag() {
+        let content = "Generated.\n\n[media]\n[{\"path\":\"/tmp/a.wav\",\"media_kind\":\"audio\",\"auto_play\":true}]\n[/media]";
+        let payload = parse_chat_payload(content);
+        assert_eq!(payload.media_details.len(), 1);
+        assert!(payload.media_details[0].auto_play);
     }
 
     #[test]

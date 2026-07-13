@@ -33,7 +33,7 @@ What it verifies:
 | WS event stream | Frontend integration + runtime behavior | Pass (integration) | API client uses `/v1/ws/events` with reconnect; exercised during UI runs |
 | Agent loop runtime status | Automated script | Pass | `/v1/agent/status` validated |
 | Background subtask progression | Manual scenario | Pending external | Requires model-backed long-running prompt |
-| Media generation/publish | Manual scenario | Pending external | Requires ComfyUI endpoint + configured workflow |
+| Media generation/publish | Manual scenario | Pending external | Requires an enabled media plugin and its external model/runtime |
 | Vision/screenshot/camera tools | Manual scenario | Pending external | Requires host permissions + model/tool availability |
 | Memory persistence/evolution | Existing backend tests + manual scenario | Pass (tests) / Pending (manual) | DB/test coverage exists; runtime behavior depends on model availability |
 
@@ -49,5 +49,5 @@ In this environment, default model `llama3.2` is unavailable (`404`), so autonom
    - normal chat turn
    - multi-turn tool call turn
    - background subtask turn
-   - media generation/publish turn (if ComfyUI configured)
+   - media generation/publish turn (if a media plugin is configured)
 4. Confirm activity stream + chat rendering + persisted history across restart.

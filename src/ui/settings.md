@@ -1,24 +1,24 @@
 # settings.rs
 
 ## Purpose
-Implements the tabbed Settings window for the desktop UI. It keeps core agent settings in fixed tabs, preserves native tabs for built-in integrations like ComfyUI and OrbWeaver, and appends schema-driven plugin tabs for discovered workflow bundles when the backend advertises them.
+Implements the tabbed Settings window for the desktop UI. It keeps core agent settings in fixed tabs and appends schema-driven settings tabs from discovered plugin manifests.
 
 ## Components
 
 ### `SettingsPanel`
-- **Does**: Holds the editable `AgentConfig`, visibility state, selected tab, discovered plugin manifests, embedded skill-specific subpanels, plus scheduled-job draft/edit/delete state that is flushed into the action queue only when the shared save button is used.
-- **Interacts with**: `AgentConfig`, `api::{BackendPluginManifest,ScheduledJob}`, `comfy_settings.rs`, `orbweaver_settings.rs`, `app.rs` schedule action dispatcher
+- **Does**: Holds the editable `AgentConfig`, visibility state, selected tab, discovered plugin manifests, plus scheduled-job draft/edit/delete state that is flushed into the action queue only when the shared save button is used.
+- **Interacts with**: `AgentConfig`, `api::{PluginManifest,ScheduledJob}`, `plugin_settings_form.rs`, and the `app.rs` schedule action dispatcher.
 
 ### `SettingsPanel::set_plugin_manifests`
-- **Does**: Stores startup plugin discovery data used to decide which skill tabs to show.
+- **Does**: Stores startup plugin discovery data used to decide which plugin tabs to show.
 - **Interacts with**: `ui/app.rs` startup backend plugin fetch.
 
 ### `SettingsPanel::sync_from_config`
-- **Does**: Replaces local config state from a saved backend config and reloads skill-panel derived state (notably the Comfy workflow cache).
+- **Does**: Replaces local config state from a saved backend config.
 - **Interacts with**: `ui/app.rs` after config persistence.
 
 ### `SettingsPanel::open` / `SettingsPanel::open_tab`
-- **Does**: Opens the settings window, optionally selecting a specific tab (for example the Comfy skill tab).
+- **Does**: Opens the settings window, optionally selecting a discovered plugin tab.
 - **Interacts with**: `ui/app.rs` toolbar actions.
 
 ### Scheduled-job state methods (`set_scheduled_jobs`, `set_scheduled_jobs_error`, `take_scheduled_job_actions`)
@@ -42,21 +42,21 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 - **Does**: Shows all schedules, lets operators stage enabled/name/prompt/interval changes, stage new schedules, stage deletions, and manually refresh backend state. The tab no longer applies row-local saves; it relies on the shared `Save & Apply` button.
 - **Interacts with**: local scheduled-job editor/draft state and the save-time `ScheduledJobAction` queue consumed by `app.rs`.
 
-### Skill tab renderers
-- **Does**: Render plugin-specific tabs for supported built-ins (`skill.comfy`, `skill.orbweaver`) using native Rust panels, and falls back to the generic plugin form renderer for any other manifest that includes a settings schema.
-- **Interacts with**: `ComfySettingsPanel`, `OrbWeaverSettingsPanel`, and `plugin_settings_form.rs`.
+### Plugin tab renderer
+- **Does**: Renders every plugin-specific tab from its canonical manifest settings schema through the generic form renderer.
+- **Interacts with**: `plugin_settings_form.rs` and manifests returned by the backend.
 
 ## Contracts
 
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
 | `app.rs` | `config` remains `pub`; `render()` returns `Option<AgentConfig>`; `open_tab()` selects a valid tab ID | Making config private or changing these signatures |
-| `api.rs` | `BackendPluginManifest.settings_tab` contains `id`, `title`, `order` when a plugin wants a settings tab | Renaming/removing settings-tab fields |
+| `api.rs` | `PluginManifest.settings_tab` contains `id`, `title`, `order` when a plugin wants a settings tab | Renaming/removing settings-tab fields |
 | `api.rs` / plugin manifests | Generic plugin tabs require `settings_schema` to be present | Removing schema handling or changing field semantics |
-| `comfy_settings.rs` | `sync_workflow_to_config` and `render_contents` remain available for the legacy built-in Comfy tab | Removing those integration hooks |
+| Plugin packages | Settings UI remains entirely manifest/schema driven | Adding a new hard-coded integration tab |
 
 ## Notes
-- Plugin tabs are discovered once from backend manifests and do not hot-reload during runtime; built-in ComfyUI and OrbWeaver tabs have local fallbacks if plugin discovery fails.
+- Plugin tabs come only from backend manifests; there are no integration-specific fallback tabs.
 - Unknown plugin settings tabs no longer require native frontend code as long as the backend provides a supported schema.
-- The global `Save & Apply` path always syncs the in-memory Comfy workflow into `AgentConfig` before returning the config.
+- The global `Save & Apply` path returns schema-updated `AgentConfig` without integration-specific synchronization hooks.
 - Scheduled jobs now follow the same top-level save model as the rest of the settings window: creates, edits, and deletions are staged locally and only emitted to `app.rs` when `Save & Apply` is clicked.

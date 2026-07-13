@@ -6,8 +6,11 @@ Installs a development checkout into another Ponderer workspace by symlinking th
 ## Components
 
 ### `install_to_ponderer.sh`
-- **Does**: Validates target root, creates `plugins/`, safely refreshes the `graphchan-orb` symlink, and invokes `install_portable.sh`.
-- **Interacts with**: Ponderer plugin discovery and `scripts/install_portable.sh`.
+- **Does**: Validates the target and SDK source, safely refreshes the
+  `graphchan-orb` symlink, and passes the source SDK path into
+  `install_portable.sh`.
+- **Interacts with**: Ponderer plugin discovery, the sibling shared SDK, and
+  `scripts/install_portable.sh`.
 
 ## Contracts
 
@@ -15,6 +18,9 @@ Installs a development checkout into another Ponderer workspace by symlinking th
 |-----------|---------|------------------|
 | Plugin discovery | Target contains `plugins/graphchan-orb/plugin.toml` | Changing install name |
 | Operators | Existing real directories are never overwritten | Removing the non-symlink guard |
+| Portable installer | Receives an absolute SDK source path even when invoked through the target symlink | Dropping the environment handoff |
 
 ## Notes
 - Copying the entire plugin directory is preferable for a standalone portable distribution.
+- The portable installer copies the shared SDK into Graphchan-Orb's venv; the
+  target workspace does not need an SDK symlink at runtime.

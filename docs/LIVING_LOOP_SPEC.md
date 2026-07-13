@@ -642,35 +642,24 @@ fn default_policy_for(profile: AgentCapabilityProfile) -> ToolCapabilityPolicy {
     match profile {
         AgentCapabilityProfile::Ambient => ToolCapabilityPolicy {
             autonomous: true,
+            // Only stable built-ins are named here. Dynamically installed
+            // tools are governed by their declared semantic effects.
             disallowed_tools: vec![
                 "shell".into(),
                 "write_file".into(),
                 "patch_file".into(),
-                "graphchan_skill".into(),
-                "post_to_graphchan".into(),
-                "generate_comfy_media".into(),
+                "write_memory".into(),
+                "publish_media_to_chat".into(),
             ],
-            allowed_tools: vec![
-                "read_file".into(),
-                "list_directory".into(),
-                "search_memory".into(),
-                "http_fetch".into(),  // Read-only web
-            ],
+            allowed_tools: None,
         },
         AgentCapabilityProfile::Dream => ToolCapabilityPolicy {
             autonomous: true,
-            disallowed_tools: vec![
-                "shell".into(),
-                "graphchan_skill".into(),
-                "post_to_graphchan".into(),
-                "http_fetch".into(),  // No external during dream
-            ],
-            allowed_tools: vec![
-                "read_file".into(),
-                "list_directory".into(),
+            allowed_tools: Some(vec![
                 "search_memory".into(),
                 "write_memory".into(),
-            ],
+            ]),
+            disallowed_tools: vec![],
         },
         // ... existing profiles
     }

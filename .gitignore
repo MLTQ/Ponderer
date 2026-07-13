@@ -24,6 +24,13 @@ plugins/graphchan-orb/**/__pycache__/
 plugins/graphchan-orb/**/*.pyc
 plugins/graphchan-orb/.DS_Store
 plugins/graphchan-orb/**/.DS_Store
+!plugins/sdk/
+!plugins/sdk/**
+plugins/sdk/python/*.egg-info/
+plugins/sdk/python/build/
+plugins/sdk/python/dist/
+plugins/sdk/python/**/__pycache__/
+plugins/sdk/python/**/*.pyc
 !plugins/image-orb/
 !plugins/image-orb/**
 plugins/image-orb/.venv/

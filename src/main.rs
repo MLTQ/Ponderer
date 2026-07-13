@@ -18,8 +18,6 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 pub use ponderer_backend::character_card;
-pub use ponderer_backend::comfy_client;
-pub use ponderer_backend::comfy_workflow;
 pub use ponderer_backend::config;
 
 use api::ApiClient;

@@ -12,8 +12,8 @@ Renders the activity log and private chat stream for the API-only frontend. Supp
 ### `render_single_event(ui, event, idx)`
 - **Does**: Renders one `FrontendEvent` with appropriate color, icon, and size. Uses `id_salt(idx)` for stable CollapsingHeader state. Tool progress shows tool name as a colored badge + truncated output inline, and force-wraps long URLs/tokens so the Mind sidebar stays bounded. All non-visible variants (`StateChanged`, `ChatStreaming`, `TokenMetrics`, `ApprovalRequest`, `CycleStart`) are no-ops here.
 
-### `render_private_chat(ui, messages, streaming_preview, media_cache, auto_play_generated_audio) -> Option<String>`
-- **Does**: Renders chat bubbles from `ChatMessage` records, including right-aligned operator rows, per-agent-message `View Prompt` controls (when `turn_id` exists), processing hints, metadata expanders, and inline media cards. Audio media cards now include in-chat `Play` / `Stop` controls and optional auto-play for newly generated Voice-Orb clips when enabled via plugin settings. Returns requested `turn_id` when the operator clicks a prompt-inspection button.
+### `render_private_chat(ui, messages, streaming_preview, media_cache) -> Option<String>`
+- **Does**: Renders chat bubbles from `ChatMessage` records, including right-aligned operator rows, per-agent-message `View Prompt` controls (when `turn_id` exists), processing hints, metadata expanders, and inline media cards. Audio cards include in-chat `Play` / `Stop` controls and honor the generic per-media `auto_play` flag. Returns requested `turn_id` when the operator clicks a prompt-inspection button.
 - **Interacts with**: `crate::api::ChatMessage`.
 
 ### `parse_chat_payload(content)`
@@ -42,4 +42,4 @@ Renders the activity log and private chat stream for the API-only frontend. Supp
 - `CollapsingHeader` widgets use `id_salt((event_idx, "reasoning"))` and `(event_idx, step_idx)` tuples so open/closed state persists independently per item even when the event list grows.
 - `FrontendEvent::ApprovalRequest`, `TokenMetrics`, and `CycleStart` have no-op arms in `render_single_event`; approvals are rendered as popups by `app.rs`, token metrics by `token_monitor.rs`, and cycle starts are only used as group boundaries.
 - Streaming preview moved to AFTER the messages loop so the live bubble appears at the bottom of the chat pane, not the top. The empty-state check now also accounts for a live preview being present so the "no messages" placeholder doesn't show during the first streaming response.
-- Audio playback uses a local output stream initialized lazily on first play attempt; auto-play is edge-triggered per file path so clips are not replayed every frame.
+- Audio playback uses a local output stream initialized lazily on first play attempt; media without `auto_play` default to manual playback, and requested auto-play is edge-triggered per file path so clips are not replayed every frame.

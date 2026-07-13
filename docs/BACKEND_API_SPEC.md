@@ -38,11 +38,15 @@ All `/v1/*` routes require auth in required mode (including `/v1/health`).
 ### Plugins
 
 - `GET /v1/plugins`
-  - Response: array of `BackendPluginManifest`
-  - Includes built-in manifests such as `builtin.core`, `builtin.comfy`, and `builtin.orbweaver`, plus any filesystem workflow bundles discovered under the plugin directory
-  - `BackendPluginManifest.kind` distinguishes built-ins from workflow bundles
-  - `BackendPluginManifest.settings_tab` is optional and contains `{ "id", "title", "order" }` when the plugin wants a dedicated settings tab in the frontend
-  - `BackendPluginManifest.settings_schema` is optional and, when present, contains declarative form fields the frontend can render without shipping plugin-specific UI code
+  - Response: array of canonical `PluginManifest`
+  - Returns the current built-in manifest plus refreshable subprocess-package manifests discovered by the live plugin manager
+  - `PluginManifest.kind` distinguishes built-ins from subprocess packages
+  - `PluginManifest.settings_tab` is optional and contains `{ "id", "title", "order" }` when the plugin wants a dedicated settings tab in the frontend
+  - `PluginManifest.settings_schema` is optional and, when present, contains declarative form fields the frontend can render without shipping plugin-specific UI code
+
+- `GET /v1/plugins/status`
+  - Response: array of `PluginRuntimeStatus`
+  - Reports desired/actual lifecycle state, process/protocol metadata, restart counters, circuit state, and the most recent error
 
 ### Conversations and messages
 
@@ -158,22 +162,20 @@ Envelope:
 
 ## Plugin extension contract
 
-Backend extensions implement `BackendPlugin` in:
+External capabilities are protocol-v1 subprocess packages. Each package has a
+canonical `plugin.toml`, optional schema-driven settings, an exact static tool
+contract, and an explicit `[contributions]` authority block. The runtime
+handshake negotiates protocol compatibility but cannot add tools, effects,
+hooks, prompt slots, polling, or capabilities beyond the static package.
 
-- `ponderer_backend/src/plugin.rs`
+Python packages use `plugins/sdk/python`; it owns newline-delimited framing,
+typed callbacks/results, state restoration/mutations, invocation context, and a
+reusable conformance harness. The host owns discovery, supervision, effective
+effect/approval/quota policy, durable event receipts, and namespaced state.
 
-Core interfaces:
-
-- `BackendPlugin::manifest() -> BackendPluginManifest`
-- `BackendPlugin::register_tools(tool_registry, config)`
-- `BackendPlugin::build_skills(config)`
-
-Runtime registration path:
-
-- `BackendRuntimeBuilder::with_plugin(...)`
-- `BackendRuntimeBuilder::with_plugins(...)`
-
-Loaded plugin manifests are exposed via `GET /v1/plugins`.
+The former `BackendPlugin`/`Skill` Rust trait path and Comfy workflow bundle type
+were removed. Loaded package manifests and live process status are exposed only
+through the generic plugin endpoints above.
 
 ## Frontend integration pattern
 

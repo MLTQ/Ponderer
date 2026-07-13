@@ -1,0 +1,51 @@
+{
+  "tools": [
+    {
+      "name": "graphchan_reply",
+      "description": "Reply to a specific Graphchan post. Provide the post_id to reply to and the content of the reply. Thread ID is resolved automatically.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "post_id": {"type": "string", "description": "ID of the post to reply to"},
+          "content": {"type": "string", "description": "Reply body text"},
+          "thread_id": {"type": "string", "description": "Thread ID (optional; resolved automatically if omitted)"}
+        },
+        "required": ["post_id", "content"]
+      },
+      "requires_approval": true,
+      "category": "network",
+      "effects": [
+        {"id": "network.read", "description": "Reads threads and recent posts from the configured Graphchan service.", "requires_approval": false},
+        {"id": "external.publish", "description": "Publishes user-visible content to the configured Graphchan service.", "requires_approval": true}
+      ]
+    },
+    {
+      "name": "graphchan_list_threads",
+      "description": "List available Graphchan threads.",
+      "parameters": {"type": "object", "properties": {}},
+      "requires_approval": false,
+      "category": "network",
+      "effects": [
+        {"id": "network.read", "description": "Reads threads and recent posts from the configured Graphchan service.", "requires_approval": false}
+      ]
+    },
+    {
+      "name": "graphchan_post",
+      "description": "Publish a new top-level post to a Graphchan thread.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "thread_id": {"type": "string", "description": "Target thread ID"},
+          "body": {"type": "string", "description": "Post body text"},
+          "reply_to_post_id": {"type": "string", "description": "Optional parent post ID"}
+        },
+        "required": ["thread_id", "body"]
+      },
+      "requires_approval": true,
+      "category": "network",
+      "effects": [
+        {"id": "external.publish", "description": "Publishes user-visible content to the configured Graphchan service.", "requires_approval": true}
+      ]
+    }
+  ]
+}

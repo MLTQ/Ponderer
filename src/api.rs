@@ -11,6 +11,13 @@ use tokio_tungstenite::tungstenite::http::header as ws_header;
 use tokio_tungstenite::tungstenite::http::HeaderValue as WsHeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 
+#[allow(unused_imports)]
+pub use ponderer_backend::plugin_contract::{
+    BackendPluginKind, BackendPluginManifest, PluginKind, PluginManifest, PluginRuntimeState,
+    PluginRuntimeStatus, PluginSettingsFieldKind, PluginSettingsFieldManifest,
+    PluginSettingsOptionManifest, PluginSettingsSchemaManifest, PluginSettingsTabManifest,
+};
+
 pub const DEFAULT_CHAT_CONVERSATION_ID: &str = "default";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -116,81 +123,6 @@ pub struct AgentRuntimeStatus {
     /// Short description of what the agent is doing right now.
     #[serde(default)]
     pub current_activity: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginSettingsTabManifest {
-    pub id: String,
-    pub title: String,
-    #[serde(default)]
-    pub order: i32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum BackendPluginKind {
-    Builtin,
-    WorkflowBundle,
-    RuntimeProcessBundle,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PluginSettingsFieldKind {
-    Boolean,
-    Text,
-    Multiline,
-    Number,
-    Select,
-    Path,
-    Secret,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginSettingsOptionManifest {
-    pub value: String,
-    pub label: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginSettingsFieldManifest {
-    pub key: String,
-    pub title: String,
-    pub kind: PluginSettingsFieldKind,
-    #[serde(default)]
-    pub help: Option<String>,
-    #[serde(default)]
-    pub required: bool,
-    #[serde(default)]
-    pub default_value: Option<Value>,
-    #[serde(default)]
-    pub options: Vec<PluginSettingsOptionManifest>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginSettingsSchemaManifest {
-    #[serde(default)]
-    pub fields: Vec<PluginSettingsFieldManifest>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackendPluginManifest {
-    pub id: String,
-    #[serde(default = "default_backend_plugin_kind")]
-    pub kind: BackendPluginKind,
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub provided_tools: Vec<String>,
-    pub provided_skills: Vec<String>,
-    #[serde(default)]
-    pub settings_tab: Option<PluginSettingsTabManifest>,
-    #[serde(default)]
-    pub settings_schema: Option<PluginSettingsSchemaManifest>,
-}
-
-fn default_backend_plugin_kind() -> BackendPluginKind {
-    BackendPluginKind::Builtin
 }
 
 #[derive(Debug, Clone)]
@@ -383,15 +315,27 @@ impl ApiClient {
             .context("Failed to decode updated config")
     }
 
-    pub async fn list_plugins(&self) -> Result<Vec<BackendPluginManifest>> {
+    pub async fn list_plugins(&self) -> Result<Vec<PluginManifest>> {
         self.request(reqwest::Method::GET, "/v1/plugins")
             .send()
             .await?
             .error_for_status()
             .context("GET /v1/plugins failed")?
-            .json::<Vec<BackendPluginManifest>>()
+            .json::<Vec<PluginManifest>>()
             .await
             .context("Failed to decode plugin manifest list")
+    }
+
+    #[allow(dead_code)] // Consumed by the tracked desktop plugin-status surface follow-up.
+    pub async fn list_plugin_statuses(&self) -> Result<Vec<PluginRuntimeStatus>> {
+        self.request(reqwest::Method::GET, "/v1/plugins/status")
+            .send()
+            .await?
+            .error_for_status()
+            .context("GET /v1/plugins/status failed")?
+            .json::<Vec<PluginRuntimeStatus>>()
+            .await
+            .context("Failed to decode plugin runtime status list")
     }
 
     pub async fn list_conversations(&self, limit: usize) -> Result<Vec<ChatConversation>> {

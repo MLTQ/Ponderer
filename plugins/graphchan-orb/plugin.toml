@@ -1,9 +1,23 @@
+manifest_version = 1
+protocol_version = 1
 id = "graphchan-orb"
 name = "Graphchan-Orb"
 version = "0.1.0"
-description = "OrbWeaver / Graphchan forum integration — polls for new posts and exposes reply and post tools."
+description = "Graphchan forum integration that polls posts and exposes reply and publishing tools."
+
+# Compatibility selector for the current discovery probe. The canonical kind is
+# decoded from this legacy alias as runtime_process_bundle.
 plugin_type = "runtime_process"
+
+requested_capabilities = ["network.read", "external.publish"]
+
 command = ["./scripts/run_plugin.sh"]
+tool_contract_file = "tools.json"
 settings_schema_file = "settings.schema.json"
 settings_tab_title = "Graphchan-Orb"
 settings_tab_order = 210
+
+[contributions]
+event_hooks = ["settings_changed"]
+prompt_slots = []
+poll_events = true

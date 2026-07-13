@@ -1,13 +1,17 @@
 # run_plugin.sh
 
 ## Purpose
-Launches Graphchan-Orb's stdio JSON-RPC server from the plugin-local virtual environment.
+Launches Graphchan-Orb's SDK-owned stdio RPC server from the plugin-local
+virtual environment.
 
 ## Components
 
 ### `run_plugin.sh`
-- **Does**: Verifies installation, enables unbuffered isolated Python I/O, exposes the bundle on `PYTHONPATH`, and runs `graphchan_orb.server`.
-- **Interacts with**: `plugin.toml`, `install_portable.sh`, `graphchan_orb/server.py`.
+- **Does**: Verifies the venv and installed SDK, enables unbuffered isolated
+  Python I/O, exposes the bundle on `PYTHONPATH`, and runs
+  `graphchan_orb.server`.
+- **Interacts with**: `plugin.toml`, `install_portable.sh`, the shared SDK, and
+  `graphchan_orb/server.py`.
 
 ## Contracts
 

@@ -10,11 +10,9 @@ Module declaration file for the `ui` crate. Re-exports all UI submodules that co
 - **`avatar`**: Avatar loading and animated GIF playback
 - **`chat`**: Event log and private chat rendering
 - **`sprite`**: Agent visual state rendering (avatar or emoji fallback)
-- **`settings`**: Tabbed settings window for core config plus skill-specific tabs
+- **`settings`**: Tabbed settings window for core config plus schema-driven plugin tabs
 - **`plugin_settings_form`**: Generic schema-driven renderer for plugin-defined settings fields
 - **`character`**: Character card import and editing panel
-- **`comfy_settings`**: ComfyUI workflow import and configuration panel
-- **`orbweaver_settings`**: OrbWeaver / Graphchan configuration panel
 - **`token_monitor`**: Live wireframe sphere renderer for token novelty traces
 
 ## Contracts

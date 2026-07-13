@@ -102,7 +102,7 @@ Scheduled-job mutation tools require approval in autonomous contexts. Graphchan 
 
 ## Plugin path
 
-Graphchan/OrbWeaver is a tracked, disabled-by-default runtime-process bundle under `plugins/graphchan-orb`. It polls through `plugin.poll_events` and exposes approval-gated reply/post tools. Runtime-process calls have method-specific deadlines and transport failures deactivate stale proxy tools.
+Graphchan is a tracked, disabled-by-default protocol-v1 package under `plugins/graphchan-orb`. It uses the shared Python SDK, polls through `plugin.poll_events`, and declares `external.publish` effects on reply/post tools so host policy supplies approval and quota gates.
 
 ## Validation baseline
 

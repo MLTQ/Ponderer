@@ -46,15 +46,26 @@ fn render_field(
                 values.insert(field.key.clone(), Value::Bool(next));
             }
         }
-        PluginSettingsFieldKind::Text
-        | PluginSettingsFieldKind::Path
-        | PluginSettingsFieldKind::Secret => {
+        PluginSettingsFieldKind::Text | PluginSettingsFieldKind::Path => {
             let mut text = values
                 .get(&field.key)
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
             if ui.text_edit_singleline(&mut text).changed() {
+                values.insert(field.key.clone(), Value::String(text));
+            }
+        }
+        PluginSettingsFieldKind::Secret => {
+            let mut text = values
+                .get(&field.key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if ui
+                .add(egui::TextEdit::singleline(&mut text).password(true))
+                .changed()
+            {
                 values.insert(field.key.clone(), Value::String(text));
             }
         }

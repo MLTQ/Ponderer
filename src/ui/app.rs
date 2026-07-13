@@ -159,17 +159,6 @@ impl AgentApp {
         self.events.push(FrontendEvent::Error(message.into()));
     }
 
-    fn voice_orb_auto_play_enabled(&self) -> bool {
-        self.settings_panel
-            .config
-            .plugin_settings
-            .get("voice-orb")
-            .and_then(serde_json::Value::as_object)
-            .and_then(|settings| settings.get("auto_play_generated_audio"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-    }
-
     fn refresh_status(&mut self) {
         match self.runtime.block_on(self.api_client.get_agent_status()) {
             Ok(status) => {
@@ -1002,7 +991,6 @@ impl eframe::App for AgentApp {
                 .as_ref()
                 .filter(|preview| preview.conversation_id == self.active_conversation_id)
                 .map(|preview| preview.content.clone());
-            let auto_play_generated_audio = self.voice_orb_auto_play_enabled();
             let active_progress: Vec<LiveToolProgress> = self
                 .live_tool_progress
                 .iter()
@@ -1027,7 +1015,6 @@ impl eframe::App for AgentApp {
                         &self.chat_history,
                         active_streaming_preview.as_deref(),
                         &mut self.chat_media_cache,
-                        auto_play_generated_audio,
                     );
                 },
             );
@@ -1387,7 +1374,7 @@ fn tool_badge_color(tool_name: &str) -> egui::Color32 {
         || name.starts_with("remember")
     {
         egui::Color32::from_rgb(80, 220, 130)
-    } else if name.starts_with("comfy") || name.contains("generate") || name.contains("image") {
+    } else if name.contains("generate") || name.contains("image") {
         egui::Color32::from_rgb(255, 140, 70)
     } else if name.starts_with("vision") || name.contains("camera") || name.contains("screen") {
         egui::Color32::from_rgb(255, 100, 150)

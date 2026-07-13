@@ -30,11 +30,11 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - **Interacts with**: `/v1/turns/:id/prompt`, `chat::render_private_chat` prompt-button return value.
 
 ### `persist_config(config)`
-- **Does**: Saves settings/character config via backend API, syncs local panel state from backend response (including tabbed skill settings state), and forces avatar reload so mood-avatar changes apply immediately.
+- **Does**: Saves settings/character config via backend API, syncs local panel state from backend response (including schema-driven plugin settings), and forces avatar reload so mood-avatar changes apply immediately.
 - **Interacts with**: `/v1/config`.
 
 ### `impl eframe::App for AgentApp` -- `update()`
-- **Does**: Main render loop. Processes WS events, updates status/chat on timer, renders chat + activity panels, and dispatches API actions for pause/stop/config/message operations. Passes the Voice-Orb auto-play setting into chat rendering so audio playback behavior follows plugin settings.
+- **Does**: Main render loop. Processes WS events, updates status/chat on timer, renders chat + activity panels, and dispatches API actions for pause/stop/config/message operations. Chat rendering consumes host-neutral media metadata without reading plugin-specific settings.
 - **Interacts with**: `chat::render_private_chat`, `chat::render_event_log`, `sprite::render_agent_sprite`.
 
 ## Contracts
@@ -49,17 +49,13 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - **Does**: Renders a rich status strip under the app title: visual-state emoji + color, orientation disposition chip, and last-action one-liner — all sourced from live WS events rather than polling.
 
 ### `render_live_tool_entry` / `tool_badge_color`
-- **Does**: Formats each live tool-progress entry as a colored tool-name badge (color by category: shell=amber, files=blue, http=purple, memory=green, comfy=orange, vision=pink) + truncated monospace output, with long URLs/tokens force-wrapped against the current panel width so tool previews do not resize the layout.
+- **Does**: Formats each live tool-progress entry as a colored tool-name badge (shell=amber, files=blue, network=purple, memory=green, generation=orange, vision=pink) plus truncated monospace output, with long URLs/tokens force-wrapped against the current panel width.
 
 ### Sidebar — three zones
 - **Does**: The right panel ("🧠 Mind") is divided into three zones: (1) mind-state group (orientation, last action, last journal), (2) "💭 Live Stream" collapsible section showing a rotating wireframe token monitor plus the last 600 chars of the active LLM token stream, (3) grouped turn-history log via `render_event_log`.
 
 ### `truncate_str` / `last_n_chars`
 - **Does**: Local helpers for display truncation. `truncate_str` adds `…` at max_chars; `last_n_chars` returns the trailing N chars of a string.
-
-### `voice_orb_auto_play_enabled()`
-- **Does**: Reads `plugin_settings["voice-orb"]["auto_play_generated_audio"]` from the currently loaded config and returns a boolean toggle consumed by chat media rendering.
-- **Interacts with**: settings panel config state and `chat::render_private_chat`.
 
 ## Notes
 - The app is no longer wired to in-process `Agent`/`AgentDatabase`/`flume` backend channels.
@@ -71,4 +67,5 @@ Defines `AgentApp`, the top-level eframe application for the API-only frontend. 
 - UI-level API failures are surfaced in the activity log as `FrontendEvent::Error` entries.
 - Prompt inspector windows are opened on demand from agent message rows and support toggling system-prompt visibility plus translucent source highlights over prompt sections.
 - `FrontendEvent::ApprovalRequest` is NOT pushed to the activity log; it is deduplicated and stored in `pending_approvals`. Each pending approval renders as an `egui::Window` popup (centered, non-collapsible) with "✅ Allow this session" and "✖ Dismiss" buttons. Approval calls `ApiClient::approve_tool`; dismiss just removes the entry from `pending_approvals`.
-- The old standalone workflow modal is now folded into the main settings window as the `ComfyUI` skill tab; the toolbar exposes direct `OrbWeaver` and `ComfyUI` shortcuts that open those tabs.
+- Integration settings are discovered from plugin manifests and rendered through one generic schema-driven surface.
+- Audio autoplay is carried by each media item, so `AgentApp` does not inspect plugin IDs or plugin-specific configuration.

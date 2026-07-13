@@ -22,3 +22,6 @@ Renders schema-driven settings controls for plugin tabs. This is the generic UI 
 
 ## Notes
 - This intentionally supports only a small field vocabulary for now: booleans, strings, textareas, numbers, selects, and path-like text inputs.
+- `secret` fields are visually masked, but protocol v1 still stores their values
+  in ordinary plugin configuration. They are a presentation hint, not a secret
+  vault; opaque host-managed secret handles are tracked separately.

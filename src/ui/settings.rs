@@ -1,7 +1,6 @@
-use super::comfy_settings::ComfySettingsPanel;
 use super::plugin_settings_form::PluginSettingsForm;
 use crate::api::{
-    BackendPluginManifest, PluginSettingsSchemaManifest, PluginSettingsTabManifest, ScheduledJob,
+    PluginManifest, PluginSettingsSchemaManifest, PluginSettingsTabManifest, ScheduledJob,
 };
 use crate::config::AgentConfig;
 use eframe::egui;
@@ -53,8 +52,7 @@ pub struct SettingsPanel {
     pub config: AgentConfig,
     pub show: bool,
     selected_tab: String,
-    plugin_manifests: Vec<BackendPluginManifest>,
-    comfy_panel: ComfySettingsPanel,
+    plugin_manifests: Vec<PluginManifest>,
     scheduled_jobs: Vec<ScheduledJob>,
     scheduled_job_editors: HashMap<String, ScheduledJobEditor>,
     pending_new_scheduled_jobs: Vec<PendingScheduledJobDraft>,
@@ -70,15 +68,11 @@ pub struct SettingsPanel {
 
 impl SettingsPanel {
     pub fn new(config: AgentConfig) -> Self {
-        let mut comfy_panel = ComfySettingsPanel::new();
-        comfy_panel.load_workflow_from_config(&config);
-
         Self {
             config,
             show: false,
             selected_tab: CORE_TAB_GENERAL.to_string(),
             plugin_manifests: Vec::new(),
-            comfy_panel,
             scheduled_jobs: Vec::new(),
             scheduled_job_editors: HashMap::new(),
             pending_new_scheduled_jobs: Vec::new(),
@@ -93,14 +87,13 @@ impl SettingsPanel {
         }
     }
 
-    pub fn set_plugin_manifests(&mut self, plugin_manifests: Vec<BackendPluginManifest>) {
+    pub fn set_plugin_manifests(&mut self, plugin_manifests: Vec<PluginManifest>) {
         self.plugin_manifests = plugin_manifests;
         self.ensure_valid_selected_tab();
     }
 
     pub fn sync_from_config(&mut self, config: AgentConfig) {
-        self.config = config.clone();
-        self.comfy_panel.load_workflow_from_config(&config);
+        self.config = config;
     }
 
     pub fn set_scheduled_jobs(&mut self, scheduled_jobs: Vec<ScheduledJob>) {
@@ -161,7 +154,6 @@ impl SettingsPanel {
                         CORE_TAB_MEMORY => self.render_memory_tab(ui),
                         CORE_TAB_SYSTEM => self.render_system_tab(ui),
                         CORE_TAB_SCHEDULES => self.render_schedules_tab(ui),
-                        "skill.comfy" => self.render_comfy_tab(ui, ctx),
                         _ => {
                             if let Some((plugin_id, schema)) =
                                 self.dynamic_plugin_schema_for_tab(&selected_tab)
@@ -197,8 +189,6 @@ impl SettingsPanel {
                         if !self.queue_dirty_scheduled_job_updates() {
                             return;
                         }
-                        let (comfy_panel, config) = (&mut self.comfy_panel, &mut self.config);
-                        comfy_panel.sync_workflow_to_config(config);
                         new_config = Some(self.config.clone());
                     }
 
@@ -979,70 +969,12 @@ impl SettingsPanel {
         true
     }
 
-    fn render_comfy_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.heading("ComfyUI Integration");
-        ui.add_space(8.0);
-
-        ui.checkbox(
-            &mut self.config.enable_image_generation,
-            "Enable image generation",
-        );
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            ui.label("ComfyUI URL:");
-            ui.text_edit_singleline(&mut self.config.comfyui.api_url);
-        });
-        ui.add_space(4.0);
-
-        ui.horizontal(|ui| {
-            ui.label("Workflow type:");
-            egui::ComboBox::from_id_salt("workflow_type")
-                .selected_text(&self.config.comfyui.workflow_type)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut self.config.comfyui.workflow_type,
-                        "sd".to_string(),
-                        "Stable Diffusion 1.5",
-                    );
-                    ui.selectable_value(
-                        &mut self.config.comfyui.workflow_type,
-                        "sdxl".to_string(),
-                        "SDXL",
-                    );
-                    ui.selectable_value(
-                        &mut self.config.comfyui.workflow_type,
-                        "flux".to_string(),
-                        "Flux",
-                    );
-                });
-        });
-        ui.add_space(4.0);
-
-        ui.horizontal(|ui| {
-            ui.label("Model name:");
-            ui.text_edit_singleline(&mut self.config.comfyui.model_name);
-        });
-        ui.add_space(12.0);
-
-        ui.separator();
-        let (comfy_panel, config) = (&mut self.comfy_panel, &mut self.config);
-        let _ = comfy_panel.render_contents(ui, ctx, config);
-    }
-
     fn skill_tabs(&self) -> Vec<PluginSettingsTabManifest> {
         let mut tabs = self
             .plugin_manifests
             .iter()
             .filter_map(|manifest| manifest.settings_tab.clone())
             .collect::<Vec<_>>();
-        if !tabs.iter().any(|tab| tab.id == "skill.comfy") {
-            tabs.push(PluginSettingsTabManifest {
-                id: "skill.comfy".to_string(),
-                title: "ComfyUI".to_string(),
-                order: 200,
-            });
-        }
         tabs.sort_by(|left, right| {
             left.order
                 .cmp(&right.order)
@@ -1084,7 +1016,7 @@ impl SettingsPanel {
                 .as_ref()
                 .map(|tab| tab.id == tab_id)
                 .unwrap_or(false);
-            if !matches_tab || tab_id == "skill.comfy" {
+            if !matches_tab {
                 return None;
             }
             manifest

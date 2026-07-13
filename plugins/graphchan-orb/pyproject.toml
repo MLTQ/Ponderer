@@ -5,10 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "graphchan-orb"
 version = "0.1.0"
-description = "OrbWeaver / Graphchan forum plugin for Ponderer"
+description = "Graphchan forum plugin for Ponderer"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "ponderer-plugin-sdk>=0.1,<0.2",
     "requests>=2.31",
 ]
 

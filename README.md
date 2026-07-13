@@ -7,133 +7,127 @@ It isn't supposed to be a tool. Its supposed to be your little buddy.
 
 ## Plugin System
 
-Ponderer supports optional capabilities through installable plugin bundles.  
-Plugins are loaded from disk at startup and can add:
+Ponderer treats optional capabilities as versioned plugin packages. A plugin can
+add:
 
-- tools the agent can call
-- skill guidance (`SKILL.md`)
-- their own settings tab in the UI
+- typed tools with declared semantic effects;
+- polled observations and lifecycle-event handlers;
+- bounded prompt contributions;
+- a schema-driven settings tab.
 
-### Skills vs Plugins
+There is one package model. “Orb” is a friendly product name for a curated
+plugin, not a second runtime or protocol.
 
-- **Skill**: agent guidance/instructions (usually markdown), no runtime required.
-- **Plugin**: installable capability bundle that can add settings, tools, and runtime behavior.
+### Contract and SDK
 
-Most advanced integrations (like Voice-Orb / qwen3-TTS) are runtime plugins and may also ship a skill file.
+`plugin.toml` declares manifest version 1, protocol version 1, identity,
+contributions, requested capabilities, and semantic effects. Native plugins use
+newline-delimited protocol-v1 RPC over stdio. Python plugins should depend on the
+shared SDK in `plugins/sdk/python`; it owns framing, negotiation, dispatch,
+typed results, and reusable conformance tests.
 
-### Where Plugins Live (Portable)
+Native subprocesses are trusted execution, not a sandbox. The host owns process
+supervision, approval minimums, outward-action quotas, durable event recording,
+and namespaced plugin state.
 
-By default, Ponderer looks in a local `plugins/` folder next to `ponderer_config.toml` and `ponderer_memory.db` (portable install behavior).  
-If missing, Ponderer creates this directory automatically at startup.
+New packages must declare `manifest_version = 1`, `protocol_version = 1`, and
+`[contributions]` together. Missing fields do not opt a package into legacy
+authority. A temporary host-compiled compatibility list admits only the bundled
+`browser-orb`, `image-orb`, and `voice-orb` package slots until they are migrated;
+plugin authors cannot extend that list from `plugin.toml`.
 
-You can override the location with:
+### Package Locations
+
+Ponderer discovers active development/portable packages in `plugins/` next to
+`ponderer_config.toml`. Override it with:
+
 
 ```bash
 export PONDERER_PLUGIN_DIR="/absolute/path/to/plugins"
 ```
 
-### Plugin Types
+Model-authored drafts live in `plugin-workbench/`. Validated versions are staged
+immutably under `plugins/store/<id>/<version>/` with `enabled=false`; staging
+never executes or activates code.
 
-Ponderer currently supports two filesystem plugin bundle types:
-
-1. **`runtime_process`**  
-   A subprocess plugin (for example Python) launched by Ponderer over JSON-RPC stdio.
-2. **`comfy_workflow`**  
-   A data-only ComfyUI workflow bundle (`workflow.json` + bindings + schema).
-
-### Runtime Plugin Bundle Format (`plugin_type = "runtime_process"`)
+### Runtime Package Format
 
 Example layout:
 
 ```text
-plugins/voice-orb/
+plugins/example-plugin/
   plugin.toml
+  tools.json
   settings.schema.json
-  SKILL.md                  (optional but recommended)
-  scripts/run_plugin.sh
-  ...
+  example_plugin/
+    server.py
+  tests/
 ```
 
-Minimal `plugin.toml`:
+Minimal manifest:
 
 ```toml
-id = "voice-orb"
-name = "Voice-Orb"
+manifest_version = 1
+protocol_version = 1
+id = "example-plugin"
+name = "Example Plugin"
 version = "0.1.0"
-description = "Portable Qwen3-TTS runtime plugin for Ponderer."
+description = "Adds an example read-only capability."
 plugin_type = "runtime_process"
-command = ["./scripts/run_plugin.sh"]
-settings_schema_file = "settings.schema.json"   # optional if default name used
-settings_tab_title = "Voice-Orb"                # optional
-settings_tab_order = 320                        # optional
+command = ["python3", "-m", "example_plugin.server"]
+requested_capabilities = ["network.read"]
+tool_contract_file = "tools.json"
+
+[contributions]
+event_hooks = []
+prompt_slots = []
+poll_events = false
+
+[[declared_effects]]
+id = "network.read"
+requires_approval = false
 ```
 
-Runtime process methods expected by Ponderer:
-
-- `plugin.handshake`
-- `plugin.configure`
-- `plugin.handle_event`
-- `plugin.get_prompt_contributions`
-- `plugin.invoke_tool`
-
-Transport is JSON-RPC style over newline-delimited stdio.
-
-### Comfy Workflow Bundle Format (`plugin_type = "comfy_workflow"`)
-
-Example layout:
-
-```text
-plugins/my-workflow/
-  plugin.toml
-  settings.schema.json
-  workflow.json
-  bindings.json
-  SKILL.md                  (optional)
-```
-
-This type is data-only and runs through Ponderer’s built-in ComfyUI transport.
+`tools.json` contains `{ "tools": [...] }` using the same typed tool manifests
+returned by the SDK handshake. For strict v1 packages, schemas and effects must
+match exactly; see `plugins/graphchan-orb/tools.json` for a complete example.
 
 ### Settings Tab Schema
 
-Plugins can declare a settings UI via `settings.schema.json`.  
-The desktop app renders it dynamically (no frontend recompile required).
+Plugins can declare `settings.schema.json`; the desktop renders it dynamically
+without integration-specific Rust UI code. Supported field kinds are
+`boolean`, `text`, `multiline`, `number`, `select`, `path`, and `secret`.
 
-Supported field kinds:
+`secret` masks the desktop control but is not a credential vault in protocol
+v1; its value still lives in ordinary plugin configuration. Credential-bearing
+plugins should wait for or integrate with host-managed secret handles.
 
-- `boolean`
-- `text`
-- `multiline`
-- `number`
-- `select`
-- `path`
-- `secret`
+An `enabled` boolean that defaults to `false` is strongly recommended for native
+packages.
 
-For runtime plugins, include an `enabled` boolean (recommended) so users can enable/disable the plugin from its tab.
+### Self-Directed Authoring
+
+The built-in `plugin_workbench` tool lets the model create a Python SDK scaffold,
+read/write only within that draft, validate it, and stage an immutable disabled
+package. It intentionally has no execute, grant, or activate action. Expanding
+authority, accessing secrets/sensors, or enabling native code remains a separate
+operator decision until a genuine sandbox adapter exists.
 
 ### Install a Plugin
 
-1. Put the plugin folder under Ponderer’s runtime-local `plugins/` directory.
-2. If the plugin has an installer script (like Voice-Orb), run it in that plugin directory.
-3. Start/restart Ponderer.
-4. Open Settings, go to the plugin’s tab, set `Enabled`, and save.
-
-Voice-Orb development helper:
-
-```bash
-./scripts/install_to_ponderer.sh /path/to/Ponderer
-```
-
-This links the repo into `plugins/voice-orb` and runs its portable installer.
+1. Put a trusted package directly under the active `plugins/` directory.
+2. Install its runtime dependencies using the package's installer.
+3. Open its generated settings tab, review settings/authority, enable it, and
+   save.
 
 ### Build Guidance for Plugin Authors
 
-For robust plugins:
-
-1. Keep everything self-contained under the plugin directory (`.venv`, models/cache, outputs, state) for portability.
-2. Avoid writing protocol data except JSON responses to stdout (log to stderr).
-3. Keep handshake lightweight; lazily import heavy dependencies.
-4. Provide a clear settings schema with safe defaults.
-5. Expose a narrow, typed tool surface instead of a generic shell interface.
+1. Use the shared SDK instead of copying an RPC loop.
+2. Keep stdout protocol-only and send diagnostics to stderr.
+3. Keep handshakes lightweight and lazily import large models.
+4. Request the narrowest capabilities and declare effects for every tool.
+5. Inherit the SDK conformance suite and add domain-specific offline tests.
+6. Keep mutable data outside immutable package source when possible.
 
 ## Telegram Bot Setup
 

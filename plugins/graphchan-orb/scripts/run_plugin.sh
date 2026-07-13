@@ -13,4 +13,10 @@ fi
 export PYTHONUNBUFFERED=1
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+
+if ! "${PYTHON_BIN}" -c "import ponderer_plugin_sdk" >/dev/null 2>&1; then
+  echo "Graphchan-Orb's SDK is missing. Re-run ./scripts/install_portable.sh." >&2
+  exit 1
+fi
+
 exec "${PYTHON_BIN}" -m graphchan_orb.server
