@@ -5,6 +5,9 @@ ponderer_config.toml
 target/
 Cargo.lock
 
+# Local agent worktrees are never repository content
+.claude/worktrees/
+
 # Database files
 *.db
 __pycache__/
