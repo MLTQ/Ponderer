@@ -5,6 +5,13 @@ I believe in Universal Basic Digimon, and this is a first cut at such a system.
 It is meant to chat with you. Take actions. Have personal desires and thoughts. Take actions on its own behalf.
 It isn't supposed to be a tool. Its supposed to be your little buddy.
 
+## Affect Lab
+
+[Affect Lab](docs/AFFECT_LAB.md) adds experimental local GGUF activation steering.
+Build model-specific directions from matched examples, compare neutral and steered
+completions, and apply manual state controls for one UI session. Managed inference
+and extraction stop when the owning UI closes.
+
 ## Plugin System
 
 Ponderer treats optional capabilities as versioned plugin packages. A plugin can

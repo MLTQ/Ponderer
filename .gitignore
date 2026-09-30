@@ -3,6 +3,7 @@ ponderer_config.toml
 
 # Cargo build artifacts
 target/
+/affect_lab/
 Cargo.lock
 
 # Local agent worktrees are never repository content

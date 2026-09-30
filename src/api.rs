@@ -11,6 +11,8 @@ use tokio_tungstenite::tungstenite::http::header as ws_header;
 use tokio_tungstenite::tungstenite::http::HeaderValue as WsHeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 
+pub use ponderer_backend::affect_lab::AffectLabStart;
+
 #[allow(unused_imports)]
 pub use ponderer_backend::plugin_contract::{
     BackendPluginKind, BackendPluginManifest, PluginKind, PluginManifest, PluginRuntimeState,
@@ -329,6 +331,49 @@ impl ApiClient {
             .json::<crate::config::AgentConfig>()
             .await
             .context("Failed to decode config response")
+    }
+
+    pub async fn affect_lab_status(&self) -> Result<Value> {
+        self.affect_lab_request(reqwest::Method::GET, "/v1/affect-lab", None)
+            .await
+    }
+
+    pub async fn affect_lab_action(&self, action: &str, body: Value) -> Result<Value> {
+        self.affect_lab_request(
+            reqwest::Method::POST,
+            &format!("/v1/affect-lab/{action}"),
+            Some(body),
+        )
+        .await
+    }
+
+    pub async fn affect_lab_provider_action(
+        &self,
+        action: &str,
+    ) -> Result<crate::config::AgentConfig> {
+        let value = self
+            .affect_lab_action(action, serde_json::json!({}))
+            .await?;
+        serde_json::from_value(value).context("Invalid provider configuration response")
+    }
+
+    async fn affect_lab_request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        let mut request = self.request(method, path);
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request.send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!("{}", text);
+        }
+        serde_json::from_str(&text).context("Invalid Affect Lab response")
     }
 
     pub async fn update_config(

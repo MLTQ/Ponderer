@@ -1,3 +1,4 @@
+pub mod affect_lab;
 pub mod app;
 pub mod avatar;
 pub mod character;

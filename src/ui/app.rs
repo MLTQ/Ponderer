@@ -1,6 +1,7 @@
 use eframe::egui;
 use flume::Receiver;
 
+use super::affect_lab::AffectLabPanel;
 use super::avatar::AvatarSet;
 use super::character::CharacterPanel;
 use super::settings::{ScheduledJobAction, SettingsPanel};
@@ -22,6 +23,7 @@ pub struct AgentApp {
     user_input: String,
     runtime: tokio::runtime::Runtime,
     settings_panel: SettingsPanel,
+    affect_lab: AffectLabPanel,
     character_panel: CharacterPanel,
     avatars: Option<AvatarSet>,
     avatars_loaded: bool,
@@ -129,6 +131,7 @@ impl AgentApp {
             user_input: String::new(),
             runtime,
             settings_panel,
+            affect_lab: AffectLabPanel::new(),
             character_panel: CharacterPanel::new(startup_config),
             avatars: None,
             avatars_loaded: false,
@@ -1023,6 +1026,10 @@ impl eframe::App for AgentApp {
                         self.refresh_scheduled_jobs();
                     }
 
+                    if ui.button("Affect Lab").clicked() {
+                        self.affect_lab.show = true;
+                    }
+
                     if ui.button("🎭 Character").clicked() {
                         self.character_panel.show = true;
                     }
@@ -1458,6 +1465,11 @@ impl eframe::App for AgentApp {
             if !inspector.open {
                 self.prompt_inspector = None;
             }
+        }
+
+        if let Some(config) = self.affect_lab.render(ctx, &self.api_client, &self.runtime) {
+            self.settings_panel.sync_from_config(config.clone());
+            self.character_panel.config = config;
         }
 
         if let Some(new_config) = self.settings_panel.render(ctx) {
