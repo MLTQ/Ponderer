@@ -85,6 +85,20 @@ def main():
                 assert state["inference_settings"]["cache_type_v"] == "q4_1"
                 assert state["inference_settings"]["unified_kv_cache"]
                 assert state["inference_settings"]["flash_attention"] == "on"
+                assert "example_library" in state
+                assert len(state["test_prompts"]) == 5
+                request(base, "/affect-lab/load", {})
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    state = request(base, "/affect-lab")
+                    if state["job"]["phase"] != "running":
+                        break
+                    time.sleep(0.05)
+                assert state["job"]["phase"] == "complete", state["job"]
+                time.sleep(0.2)
+                state = request(base, "/affect-lab")
+                assert state["native_pid"], "The loaded engine died when its job thread exited"
+                loaded_pid = state["native_pid"]
                 selected = request(base, "/affect-lab/use-for-agent", {})
                 selected["relationship_description"] = "Temporary lifecycle test"
                 request(base, "/config", selected, "PUT")
@@ -103,6 +117,10 @@ def main():
                         details += "\n" + inference_log.read_text(errors="replace")[-2000:]
                     raise RuntimeError(f"Fixture inference failed: {details}") from error
                 state = request(base, "/affect-lab")
+                assert state["native_pid"] == loaded_pid, "Completion reloaded an already loaded neutral engine"
+                time.sleep(0.2)
+                state = request(base, "/affect-lab")
+                assert state["native_pid"] == loaded_pid, "Engine died when its HTTP request thread exited"
                 pids = [backend.pid, state["worker_pid"], state["native_pid"]]
                 pids.extend(descendants(state["native_pid"]))
                 assert len(set(pids)) >= 4, "Expected backend, worker, native supervisor and inference process"
@@ -112,7 +130,7 @@ def main():
                 while time.monotonic() < deadline and not all(helpers.inactive(pid) for pid in pids):
                     time.sleep(0.05)
                 assert all(helpers.inactive(pid) for pid in pids), "A model process survived UI-parent pipe closure"
-                print("PASS: session provider, durable-config isolation, and UI-close termination of the complete inference chain")
+                print("PASS: explicit load persists across jobs/requests, session provider, durable-config isolation, and UI-close termination of the complete inference chain")
             finally:
                 if backend.poll() is None:
                     backend.kill()

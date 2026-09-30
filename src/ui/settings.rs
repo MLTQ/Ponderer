@@ -96,6 +96,15 @@ impl SettingsPanel {
         self.config = config;
     }
 
+    pub fn sync_provider_from_config(&mut self, config: &AgentConfig) {
+        // Session provider changes must not erase unrelated unsaved settings.
+        self.config.llm_api_url = config.llm_api_url.clone();
+        self.config.llm_api_key = config.llm_api_key.clone();
+        self.config.llm_model = config.llm_model.clone();
+        self.config.reflection_model = config.reflection_model.clone();
+        self.config.respond_to.decision_model = config.respond_to.decision_model.clone();
+    }
+
     pub fn set_scheduled_jobs(&mut self, scheduled_jobs: Vec<ScheduledJob>) {
         self.scheduled_jobs = scheduled_jobs;
         self.scheduled_job_editors.clear();
@@ -125,7 +134,12 @@ impl SettingsPanel {
         }
     }
 
-    pub fn render(&mut self, ctx: &egui::Context) -> Option<AgentConfig> {
+    pub fn render(
+        &mut self,
+        ctx: &egui::Context,
+        save_allowed: bool,
+        mut model_controls: impl FnMut(&mut egui::Ui, &mut AgentConfig),
+    ) -> Option<AgentConfig> {
         if !self.show {
             return None;
         }
@@ -148,7 +162,7 @@ impl SettingsPanel {
                 egui::ScrollArea::vertical()
                     .id_salt("settings_tab_scroll")
                     .show(ui, |ui| match selected_tab.as_str() {
-                        CORE_TAB_GENERAL => self.render_general_tab(ui),
+                        CORE_TAB_GENERAL => self.render_general_tab(ui, &mut model_controls),
                         CORE_TAB_BEHAVIOR => self.render_behavior_tab(ui),
                         CORE_TAB_LOOPS => self.render_loops_tab(ui),
                         CORE_TAB_MEMORY => self.render_memory_tab(ui),
@@ -185,7 +199,10 @@ impl SettingsPanel {
                 ui.add_space(8.0);
 
                 ui.horizontal(|ui| {
-                    if ui.button("💾 Save & Apply").clicked() {
+                    if ui
+                        .add_enabled(save_allowed, egui::Button::new("💾 Save & Apply"))
+                        .clicked()
+                    {
                         if !self.queue_dirty_scheduled_job_updates() {
                             return;
                         }
@@ -227,36 +244,12 @@ impl SettingsPanel {
         });
     }
 
-    fn render_general_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("LLM Configuration");
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            ui.label("API URL:");
-            ui.text_edit_singleline(&mut self.config.llm_api_url);
-        });
-        ui.label("Example: http://localhost:11434 (Ollama)");
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            ui.label("Model:   ");
-            ui.text_edit_singleline(&mut self.config.llm_model);
-        });
-        ui.label("Example: llama3.2, qwen2.5, mistral");
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            ui.label("API Key: ");
-            let mut key_str = self.config.llm_api_key.clone().unwrap_or_default();
-            if ui.text_edit_singleline(&mut key_str).changed() {
-                self.config.llm_api_key = if key_str.is_empty() {
-                    None
-                } else {
-                    Some(key_str)
-                };
-            }
-        });
-        ui.label("Optional - only needed for OpenAI/Claude");
+    fn render_general_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        model_controls: &mut impl FnMut(&mut egui::Ui, &mut AgentConfig),
+    ) {
+        model_controls(ui, &mut self.config);
         ui.add_space(16.0);
 
         ui.separator();
@@ -1102,5 +1095,31 @@ impl SettingsPanel {
                 .clone()
                 .map(|schema| (manifest.id.clone(), schema))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn provider_switch_preserves_unsaved_non_provider_fields() {
+        let mut panel = SettingsPanel::new(AgentConfig::default());
+        panel.config.username = "Unsaved identity".into();
+        panel.config.relationship_description = "Unsaved relationship".into();
+        let selected = AgentConfig {
+            llm_model: "ponderer-local-gguf".into(),
+            llm_api_url: "http://127.0.0.1:1234/v1".into(),
+            reflection_model: Some("reflection-fixture".into()),
+            ..Default::default()
+        };
+        panel.sync_provider_from_config(&selected);
+        assert_eq!(panel.config.username, "Unsaved identity");
+        assert_eq!(
+            panel.config.relationship_description,
+            "Unsaved relationship"
+        );
+        assert_eq!(panel.config.llm_model, selected.llm_model);
+        assert_eq!(panel.config.llm_api_url, selected.llm_api_url);
+        assert_eq!(panel.config.reflection_model, selected.reflection_model);
     }
 }

@@ -479,6 +479,12 @@ impl AgentApp {
     }
 
     fn persist_config(&mut self, config: AgentConfig) {
+        if self.affect_lab.provider_change_pending() {
+            self.push_ui_error(
+                "Wait for the model provider change to finish before saving settings.",
+            );
+            return;
+        }
         match self
             .runtime
             .block_on(self.api_client.update_config(&config))
@@ -1467,12 +1473,27 @@ impl eframe::App for AgentApp {
             }
         }
 
-        if let Some(config) = self.affect_lab.render(ctx, &self.api_client, &self.runtime) {
-            self.settings_panel.sync_from_config(config.clone());
+        if let Some(config) =
+            self.affect_lab
+                .tick(&self.api_client, &self.runtime, self.settings_panel.show)
+        {
+            self.settings_panel.sync_provider_from_config(&config);
             self.character_panel.config = config;
         }
 
-        if let Some(new_config) = self.settings_panel.render(ctx) {
+        self.affect_lab.render(ctx, &self.api_client, &self.runtime);
+        if self.affect_lab.open_settings {
+            self.affect_lab.open_settings = false;
+            self.settings_panel.open_tab("core.general");
+        }
+        if let Some(new_config) = self.settings_panel.render(
+            ctx,
+            !self.affect_lab.provider_change_pending(),
+            |ui, config| {
+                self.affect_lab
+                    .render_connection(ui, config, &self.api_client, &self.runtime);
+            },
+        ) {
             self.persist_config(new_config);
         }
         let scheduled_job_actions = self.settings_panel.take_scheduled_job_actions();

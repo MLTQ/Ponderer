@@ -7,23 +7,48 @@ API providers remain available; the local provider can be selected for one sessi
 
 ## Desktop use
 
-Rebuild and restart Ponderer, then open **Affect Lab** beside Settings.
+Rebuild and restart Ponderer. Model connection/loading lives in **Settings →
+General → Model connection**; the toolbar's **Affect Lab** contains experiments.
 
-1. Select a single model GGUF or an LM Studio directory containing one model.
+1. Switch the model connection editor from **API** to **Local GGUF**. This changes
+   the editor only, not the running provider. Select a single model GGUF or an
+   LM Studio directory containing one model.
    Projector files beginning with `mmproj` are excluded from directory selection.
 2. Choose CPU threads, GPU layers, context size, KV/cache options and the
-   `llama-server` executable under **Inference and memory settings**.
-   GPU layers zero uses CPU. The model is loaded when an experiment or completion
-   needs it, rather than at provider startup.
-3. Start the local provider. Choose contentment, satisfaction or excitement and
-   build a matched-pair vector. Other constructs use the custom target/control
-   recipe editor. Every recipe is an experimental hypothesis.
-4. Run a neutral-versus-steered comparison before selecting a manual strength.
-   Both conditions use the same prompt, seed, temperature and token budget. Reports
-   include exact model/vector/recipe fingerprints, layer bounds and raw output.
-5. Apply a manual state and select **Use for this session** to route ordinary
+   `llama-server` executable. Zero GPU layers uses CPU; nonzero layers also need
+   a GPU-capable engine. **Use detected CUDA engine** offers the standalone CUDA
+   executable if present in the operator's checkout. The 200k preset does not
+   change executable/GPU layers. **Load local model** inspects metadata then queues
+   actual weight/KV allocation, with visible progress and native process state.
+   **Load weights / retry** can reload after a test.
+3. Open **Example library**. Contentment, satisfaction, excitement, curiosity and
+   fear have editable starter target/control pairs; custom affects start with two
+   blank matched situations. **Create/Rebuild … control from these examples**
+   derives a model-specific direction, not an emotion labeler. Built recipe texts
+   are used only when their recipe fingerprint matches. Edits are UI drafts until
+   built; polling cannot overwrite them. Every recipe is an unvalidated hypothesis.
+4. In **Affect mixer**, combine built affects using sliders. Their total is bounded
+   by one; at most eight nonzero directions are supported. After a 450 ms editing
+   pause the mix is sent automatically, without an Apply-state step. Acknowledged
+   and currently loaded mixes are distinct. The next request may reload the engine;
+   avoid frequent changes during long tasks. Reset works after invalid layer edits.
+5. In **Test & evidence**, compare the mix against neutral and half strength on five
+   editable held-out prompts. Conditions use identical temperature zero, seed 42
+   and token budget, with independent native caches between conditions. Outputs
+   are paired by prompt and labeled identical/changed. Unchanged arithmetic and
+   exact-JSON starter prompts get strict automatic checks; third-person leakage
+   and intended affect/choice changes need human review. Truncation is visible.
+   Save separate affect/quality assessments and notes into the fingerprinted JSON
+   report. Tests preserve the agent's requested mix.
+6. In Settings select **Use for this session** to route ordinary
    completions, reflection and streaming tool calls through the local provider.
    This selection cancels the current agent turn. It supports text inference.
+
+Quiet background polling never disables controls or inserts/removes a spinner.
+Older poll responses cannot overwrite a newer command, and acknowledgments cannot
+discard subsequent slider edits. Failed mix updates require an edit or explicit
+retry, rather than retrying forever. Session-provider changes preserve unrelated
+unsaved Settings drafts; saving is blocked while a provider switch is in flight.
 
 Requested and applied profiles are displayed separately. New settings take effect
 at request boundaries. Changing a profile restarts native inference and discards
@@ -126,6 +151,14 @@ language, persona, topic or other correlated properties. Neither emotion words n
 changed choices establish subjective experience. Intrinsic reward, learning from
 outcomes and automatic appraisal-driven changes are separate future work.
 
+The UI distinguishes geometry/file integrity, changed output, basic task integrity
+and operator judgment of the intended construct. None amounts to calibration.
+Repeated unseen tasks, individual controls before mixtures, multiple strengths and
+layer ranges, shuffled/placebo interventions and blinded reviews remain necessary
+before claiming useful affect specificity. The lab does not yet run placebo/shuffle
+controls, confidence intervals or repeated-seed evaluations. Existing local reports
+remain on disk, while the UI shows the last comparison of the current worker session.
+
 ## Reproducing the local experiment
 
 The tested `Qwen3.8-27B-OBLITERATED-Q4_K_M.gguf` identifies itself as `qwen35`, with
@@ -147,6 +180,14 @@ proposed reflecting on lessons and sharing them with others. Both ended normally
 This demonstrates a working intervention and changed output on this prompt, rather
 than validating contentment or an intrinsic reward. The full raw comparison is kept
 in the local artifact directory. Broader behavioral calibration remains tracked.
+
+A later RTX 4090 smoke test combined contentment 0.15 and satisfaction 0.10 on
+layers 21–42, comparing neutral/half/full mixtures with 200k context, unified KV,
+Q4_1 K/V and flash attention on. All six arithmetic/exact-JSON checks passed,
+outputs ended normally and the requested default remained neutral. This verifies
+multi-vector operation and two basic integrity tasks, not either intended affect.
+The report is `affect_lab/comparisons/mix-1790803929668583843.json` (local artifact,
+not committed). This short test allocates a long context but does not fill it.
 
 ```bash
 python3 ponderer_backend/resources/affect_lab/worker.py inspect --model /path/to/model.gguf

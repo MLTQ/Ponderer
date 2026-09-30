@@ -29,9 +29,13 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 - **Does**: Collects all staged schedule creates, edits, and deletions, validates them, and enqueues the corresponding `Create` / `Update` / `Delete` actions so the global `Save & Apply` button is the single commit point for the schedules tab.
 - **Interacts with**: `render`, scheduled-job editor/draft state, and `app.rs` schedule action dispatcher.
 
-### `SettingsPanel::render(ctx) -> Option<AgentConfig>`
+### `SettingsPanel::render(ctx, save_allowed, model_controls) -> Option<AgentConfig>`
 - **Does**: Draws the tabbed settings window and returns `Some(config)` when the user clicks `Save & Apply`. Before returning, it now flushes all staged schedule creates/edits/deletes into the action queue so the settings window has one shared save contract.
 - **Interacts with**: `ui/app.rs` for persistence through the backend API.
+- **Model controls**: General delegates model connection editing to the shared
+  Affect Lab controller. An API/local-GGUF dropdown switches editors; loading and
+  provider selection are explicit session actions. API keys are masked. The
+  app merges only provider fields after a switch, preserving other settings drafts.
 
 ### Core tab renderers
 - **Does**: Render grouped core settings tabs: `General`, `Behavior`, `Living Loop`, `Memory`, `System`, and `Schedules`. Living Loop includes Loose-mode arming, episode breath, consecutive-episode, and cooldown controls.
@@ -50,7 +54,7 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
-| `app.rs` | `config` remains `pub`; `render()` returns `Option<AgentConfig>`; `open_tab()` selects a valid tab ID | Making config private or changing these signatures |
+| `app.rs` | `config` remains `pub`; `render(ctx, save_allowed, model_controls)` returns `Option<AgentConfig>`; provider-only sync preserves drafts; `open_tab()` selects a valid tab ID | Changing these signatures or overwriting unrelated drafts |
 | `api.rs` | `PluginManifest.settings_tab` contains `id`, `title`, `order` when a plugin wants a settings tab | Renaming/removing settings-tab fields |
 | `api.rs` / plugin manifests | Generic plugin tabs require `settings_schema` to be present | Removing schema handling or changing field semantics |
 | Plugin packages | Settings UI remains entirely manifest/schema driven | Adding a new hard-coded integration tab |
