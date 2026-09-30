@@ -11,7 +11,8 @@ Rebuild and restart Ponderer, then open **Affect Lab** beside Settings.
 
 1. Select a single model GGUF or an LM Studio directory containing one model.
    Projector files beginning with `mmproj` are excluded from directory selection.
-2. Choose CPU threads, GPU layers, context size and the `llama-server` executable.
+2. Choose CPU threads, GPU layers, context size, KV/cache options and the
+   `llama-server` executable under **Inference and memory settings**.
    GPU layers zero uses CPU. The model is loaded when an experiment or completion
    needs it, rather than at provider startup.
 3. Start the local provider. Choose contentment, satisfaction or excitement and
@@ -53,6 +54,55 @@ header directory and `PONDERER_LLAMA_LIB` to the library directory before starti
 Ponderer. The server executable must use a compatible engine installation too.
 GPU extraction needs a library build with the relevant device support; selecting
 GPU layers does not add GPU support to a CPU-only library.
+
+## Long-context memory settings
+
+The **200k / Q4_1 preset** selects 200,000 tokens, unified KV, `q4_1` for both K and
+V, and flash attention `on`. It leaves the executable and GPU layers unchanged.
+The default remains a conservative 16,384-token, F16-cache configuration.
+
+| UI setting | Native llama.cpp flags |
+| --- | --- |
+| Context size | `--ctx-size 200000` |
+| Unified KV cache | `--kv-unified` (or explicit `--no-kv-unified`) |
+| K / V cache | `--cache-type-k q4_1 --cache-type-v q4_1` |
+| Flash attention | `--flash-attn on` (`auto` and `off` are also selectable) |
+
+These flags are described in the [llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
+Context accepts 1,024..1,048,576 tokens, but that UI limit is not a promise about a
+model's training window, memory capacity or long-context quality. This Qwen GGUF
+declares 262,144 tokens, so 200,000 requires no extra RoPE override. The engine may
+round its allocation upward; the tested 200,000 request produced a 200,192-token
+slot. Context includes the prompt and generated response, not just input tokens.
+
+Quantized V cache requires flash attention; `off` plus a quantized V type is
+rejected before loading. Quantization reduces cache storage but can affect quality.
+Unified KV shares a buffer across sequences; it is not a separate compression
+method. This host uses one inference slot and serializes requests. Disabling
+context shift makes an overfull prompt fail rather than silently dropping history.
+
+Managed loopback GGUF calls have a bounded one-hour request deadline instead of the
+ordinary two minutes, and the proxy accepts request bodies up to 16 MiB. Existing
+remote providers keep their deadlines. Closing the UI still kills the entire
+process chain; longer deadlines do not create detached workers. The extraction
+recipe continues to use its separate short 1,024-token context and default caches,
+so changing inference KV settings does not silently change how vectors are built.
+
+On this machine, `/usr/bin/llama-server` has no GPU devices. The GPU smoke test used
+`/home/m/Code/llama.cpp-cuda/build/bin/llama-server`, GPU layers `999`, and
+`CUDA_VISIBLE_DEVICES=0` to select the RTX 4090. To reproduce that device isolation,
+launch Ponderer with that environment variable, choose the CUDA executable in the
+lab, then apply the preset. No CUDA/LM Studio installation or service was changed.
+Use a compatible engine with the required kernels; another build/device may reject
+the same cache type or use slower fallback operations. The CUDA build's cache says
+`GGML_CUDA_FA_ALL_QUANTS=OFF`, so full-window performance of its quantized attention
+path still needs measurement even though the short exact-settings test succeeded.
+
+Both CPU and RTX 4090 runs loaded the 200k configuration and answered the short
+arithmetic prompt with `42` at neutral and contentment strength 0.25. This verifies
+startup, allocation, short inference and steering compatibility. It does **not**
+benchmark a filled 200k prompt, task quality, long-prefill speed or worst-case VRAM.
+Reports record the selected engine and memory settings alongside the fingerprints.
 
 ## Extraction method and limits
 
@@ -121,5 +171,6 @@ python3 scripts/validate_affect_ui_lifetime.py /absolute/path/to/ponderer
 Tests cover malformed profiles, vector geometry, exact fingerprints, request-local
 overrides, profile/cache isolation, comparison restoration, authentication,
 streaming, cancellation, native process-group death, durable config isolation,
-and the complete UI-parent-pipe shutdown chain. Mock protocol tests do not validate
+long-context flag forwarding, invalid cache/attention combinations, large request
+bodies, and the complete UI-parent-pipe shutdown chain. Mock protocol tests do not validate
 an emotion construct; real-model reports support the narrower mechanics checks.

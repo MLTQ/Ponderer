@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_HELPER = ROOT / "ponderer_backend/tests/test_affect_lab.py"
@@ -77,8 +78,13 @@ def main():
                     except OSError:
                         time.sleep(0.05)
                 request(base, "/agent/pause", {"paused": True}, "PUT")
-                state = request(base, "/affect-lab/start", {"model_path": str(model), "server_binary": str(fake)})
+                state = request(base, "/affect-lab/start", {"model_path": str(model), "server_binary": str(fake), "context_size": 200_000, "unified_kv_cache": True, "cache_type_k": "q4_1", "cache_type_v": "q4_1", "flash_attention": "on"})
                 assert state["running"]
+                assert state["inference_settings"]["context_size"] == 200_000
+                assert state["inference_settings"]["cache_type_k"] == "q4_1"
+                assert state["inference_settings"]["cache_type_v"] == "q4_1"
+                assert state["inference_settings"]["unified_kv_cache"]
+                assert state["inference_settings"]["flash_attention"] == "on"
                 selected = request(base, "/affect-lab/use-for-agent", {})
                 selected["relationship_description"] = "Temporary lifecycle test"
                 request(base, "/config", selected, "PUT")
@@ -87,8 +93,15 @@ def main():
                 assert selected["llm_api_key"] not in durable, "Ephemeral provider token was persisted"
                 # Both completion clients see this same compatible API endpoint.
                 call = Request(selected["llm_api_url"] + "/chat/completions", json.dumps({"model": selected["llm_model"], "messages": [{"role": "user", "content": "fixture"}]}).encode(), {"Authorization": "Bearer " + selected["llm_api_key"], "Content-Type": "application/json"})
-                with urlopen(call, timeout=10) as response:
-                    assert json.load(response)["choices"][0]["message"]["content"] == "0"
+                try:
+                    with urlopen(call, timeout=10) as response:
+                        assert json.load(response)["choices"][0]["message"]["content"] == "0"
+                except HTTPError as error:
+                    details = error.read().decode(errors="replace")
+                    inference_log = directory / "lab/inference.log"
+                    if inference_log.is_file():
+                        details += "\n" + inference_log.read_text(errors="replace")[-2000:]
+                    raise RuntimeError(f"Fixture inference failed: {details}") from error
                 state = request(base, "/affect-lab")
                 pids = [backend.pid, state["worker_pid"], state["native_pid"]]
                 pids.extend(descendants(state["native_pid"]))

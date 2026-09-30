@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use serde_json::{json, Value};
 
-use crate::api::{AffectLabStart, ApiClient};
+use crate::api::{AffectLabStart, ApiClient, CACHE_TYPES, MAX_CONTEXT_SIZE};
 use crate::config::AgentConfig;
 
 enum LabReply {
@@ -204,7 +204,7 @@ impl AffectLabPanel {
                 ui.add(egui::DragValue::new(&mut self.settings.gpu_layers).range(0..=999));
             });
         });
-        ui.collapsing("Inference executable", |ui| {
+        ui.collapsing("Inference and memory settings", |ui| {
             ui.add_enabled(
                 !running,
                 egui::TextEdit::singleline(&mut self.settings.server_binary)
@@ -215,9 +215,42 @@ impl AffectLabPanel {
                 ui.label("Context size");
                 ui.add_enabled(
                     !running,
-                    egui::DragValue::new(&mut self.settings.context_size).range(1024..=65536),
+                    egui::DragValue::new(&mut self.settings.context_size).range(1024..=MAX_CONTEXT_SIZE),
                 );
+                if ui.add_enabled(!running, egui::Button::new("200k / Q4_1 preset")).clicked() {
+                    self.settings.apply_200k_preset();
+                }
             });
+            ui.add_enabled_ui(!running, |ui| {
+                ui.checkbox(&mut self.settings.unified_kv_cache, "Unified KV cache");
+                ui.horizontal(|ui| {
+                    ui.label("K cache");
+                    egui::ComboBox::from_id_salt("affect_cache_k")
+                        .selected_text(&self.settings.cache_type_k)
+                        .show_ui(ui, |ui| {
+                            for value in CACHE_TYPES {
+                                ui.selectable_value(&mut self.settings.cache_type_k, (*value).into(), *value);
+                            }
+                        });
+                    ui.label("V cache");
+                    egui::ComboBox::from_id_salt("affect_cache_v")
+                        .selected_text(&self.settings.cache_type_v)
+                        .show_ui(ui, |ui| {
+                            for value in CACHE_TYPES {
+                                ui.selectable_value(&mut self.settings.cache_type_v, (*value).into(), *value);
+                            }
+                        });
+                    ui.label("Flash attention");
+                    egui::ComboBox::from_id_salt("affect_flash")
+                        .selected_text(&self.settings.flash_attention)
+                        .show_ui(ui, |ui| {
+                            for value in ["auto", "on", "off"] {
+                                ui.selectable_value(&mut self.settings.flash_attention, value.into(), value);
+                            }
+                        });
+                });
+            });
+            ui.small("Quantized V cache requires flash attention. The preset leaves GPU layers and executable unchanged; use an engine supporting Q4_1 flash-attention kernels on your device.");
         });
         ui.horizontal(|ui| {
             if ui
@@ -259,6 +292,18 @@ impl AffectLabPanel {
             model["layers"],
             model["embedding"]
         ));
+        let trained_context = model["trained_context"].as_u64().unwrap_or(0);
+        ui.small(format!(
+            "Inference: {} tokens · K {} / V {} · flash {} · unified KV {}",
+            self.status["context_size"],
+            self.status["inference_settings"]["cache_type_k"],
+            self.status["inference_settings"]["cache_type_v"],
+            self.status["inference_settings"]["flash_attention"],
+            self.status["inference_settings"]["unified_kv_cache"]
+        ));
+        if trained_context > 0 && u64::from(self.settings.context_size) > trained_context {
+            ui.colored_label(egui::Color32::YELLOW, format!("Requested context exceeds the model's declared {trained_context}-token context. No extra RoPE scaling is configured."));
+        }
         let used = self.status["used_by_agent"].as_bool().unwrap_or(false);
         ui.horizontal(|ui| {
             ui.label(if used {
