@@ -154,19 +154,17 @@ Set these before starting Ponderer:
 
 ```bash
 export TELEGRAM_BOT_TOKEN="<your-bot-token>"
-export TELEGRAM_CHAT_ID="<your-chat-id>"   # optional but recommended
+export TELEGRAM_CHAT_ID="<your-positive-private-chat-id>"   # required
 ```
 
-`TELEGRAM_CHAT_ID` restricts the bot to your account only. If omitted, anyone who messages the bot can talk to the agent.
+`TELEGRAM_CHAT_ID` is required. Without it, Telegram is disabled. Only messages from that same user in their private chat are accepted; groups and other senders cannot issue operator commands. These settings are also available in Settings → General.
 
 ### 4. Start Ponderer
 
-No extra steps — the bot starts automatically when `TELEGRAM_BOT_TOKEN` is set. You should see a log line:
+The bot starts when both credentials are configured. Messages use an owner-scoped `telegram:<chat-id>` conversation. Replies are durably queued independently of the receiver, so a long generation does not block incoming messages.
 
-```
-Telegram bot active (allowed_chat_id: Some(<id>))
-```
+While the UI is open, the agent can also choose to reach out based on its ongoing reflection. This is not a scheduled check-in: quiet hours, novelty, contact budgets, explicit feedback and expiry constrain a model-authored decision. Settings → General → Chosen outreach controls this behavior. Default limits are three spontaneous messages per rolling day, at least one hour apart, with quiet hours from 22:00 to 08:00 local time.
 
-Messages you send to the bot are routed into a conversation named `"telegram"` and replies come back as Telegram messages.
+Closing the owning UI stops the backend and Telegram. No service is installed, and `PONDERER_BACKEND_LIFETIME=persistent` no longer bypasses this safeguard. Pending state resumes on the next UI launch; uncertain deliveries are not automatically resent.
 
 ---

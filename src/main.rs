@@ -90,14 +90,7 @@ fn run_desktop_mode() -> Result<()> {
     );
 
     if let Some(mut backend) = backend_process {
-        if backend.ui_scoped {
-            backend.shutdown();
-        } else {
-            tracing::info!(
-                "Leaving local backend {} running after the UI closes",
-                backend.base_url
-            );
-        }
+        backend.shutdown();
     }
 
     if let Err(error) = ui_result {
@@ -150,7 +143,6 @@ struct BackendProcess {
     child: Child,
     base_url: String,
     token: String,
-    ui_scoped: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -198,9 +190,7 @@ impl BackendProcess {
 
 impl Drop for BackendProcess {
     fn drop(&mut self) {
-        if self.ui_scoped {
-            self.shutdown();
-        }
+        self.shutdown();
     }
 }
 
@@ -248,17 +238,10 @@ fn connect_or_launch_local_backend() -> Result<(ApiClient, Option<BackendProcess
         launched.shutdown();
         return Err(error).context("failed to persist local backend discovery");
     }
-    if launched.ui_scoped {
-        tracing::info!(
-            "Autostarted UI-owned local backend at {}",
-            launched.base_url
-        );
-    } else {
-        tracing::info!(
-            "Autostarted persistent local backend at {}",
-            launched.base_url
-        );
-    }
+    tracing::info!(
+        "Autostarted UI-owned local backend at {}",
+        launched.base_url
+    );
     Ok((client, Some(launched)))
 }
 
@@ -538,21 +521,19 @@ fn remove_discovery_if_owned(pid: u32) {
 
 fn backend_is_ui_scoped() -> bool {
     let value = std::env::var("PONDERER_BACKEND_LIFETIME").ok();
-    if value.as_deref().is_some_and(|value| {
-        !value.trim().is_empty()
-            && !value.trim().eq_ignore_ascii_case("ui")
-            && !value.trim().eq_ignore_ascii_case("persistent")
-    }) {
+    if value
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty() && !value.trim().eq_ignore_ascii_case("ui"))
+    {
         tracing::warn!(
-            "Unknown PONDERER_BACKEND_LIFETIME value {:?}; using safe UI-owned lifetime",
-            value.as_deref().unwrap_or_default()
+            "Backend lifetime overrides are ignored: the desktop backend always stops with its UI"
         );
     }
     backend_lifetime_value_is_ui_scoped(value.as_deref())
 }
 
-fn backend_lifetime_value_is_ui_scoped(value: Option<&str>) -> bool {
-    !value.is_some_and(|value| value.trim().eq_ignore_ascii_case("persistent"))
+fn backend_lifetime_value_is_ui_scoped(_value: Option<&str>) -> bool {
+    true
 }
 
 fn monitor_ui_parent_pipe() {
@@ -594,7 +575,7 @@ fn launch_backend_process() -> Result<BackendProcess> {
     let executable =
         std::env::current_exe().context("failed to resolve current ponderer executable path")?;
 
-    let ui_scoped = backend_is_ui_scoped();
+    let _ = backend_is_ui_scoped();
     let mut command = Command::new(executable);
     command
         .arg("--backend-only")
@@ -603,23 +584,11 @@ fn launch_backend_process() -> Result<BackendProcess> {
         .env("PONDERER_BACKEND_TOKEN", token.clone())
         .current_dir(current_dir);
 
-    if ui_scoped {
-        command
-            .env("PONDERER_BACKEND_PARENT_PIPE", "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-    } else {
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
-    }
+    command
+        .env("PONDERER_BACKEND_PARENT_PIPE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
 
     let mut child = command.spawn().context("failed to spawn backend process")?;
 
@@ -633,7 +602,6 @@ fn launch_backend_process() -> Result<BackendProcess> {
         child,
         base_url: format!("http://{}", bind_addr),
         token,
-        ui_scoped,
     })
 }
 
@@ -715,11 +683,17 @@ mod tests {
     }
 
     #[test]
-    fn backend_lifetime_is_ui_owned_unless_persistence_is_explicit() {
-        for value in [None, Some(""), Some("ui"), Some("UI"), Some("unexpected")] {
+    fn backend_lifetime_is_always_ui_owned() {
+        for value in [
+            None,
+            Some(""),
+            Some("ui"),
+            Some("UI"),
+            Some("unexpected"),
+            Some(" persistent "),
+        ] {
             assert!(backend_lifetime_value_is_ui_scoped(value));
         }
-        assert!(!backend_lifetime_value_is_ui_scoped(Some(" persistent ")));
     }
 
     #[test]

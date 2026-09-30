@@ -1,11 +1,23 @@
 # Living Loop Implementation Status
 
-**Last updated:** 2026-07-12
+**Last updated:** 2026-09-30
 **Current implementation epic:** `Ponderer-qhx`
 
 ## Outcome
 
-Ponderer now defaults to the three-loop Living Loop. It is designed to remain running after the desktop window closes, recover its loop after failures, carry unfinished work across process restarts, and let prior experience causally influence later model calls without treating generated personality text as canonical identity.
+Ponderer defaults to the three-loop Living Loop. While its owning desktop UI is open, it can reflect, pursue bounded goals, and choose to contact its operator without a chat prompt. Closing or losing that UI stops the backend, including cognition and Telegram. This is an intentional safeguard: there is no installed service, and the former persistent-lifetime environment override is ignored. Durable state resumes when the UI is opened again.
+
+The continuity appraisal separates operator-owned identity (agent name, operator name, relationship, principles, boundaries) from evidence-backed learned claims. Claims can be revised by ID, with confidence, supporting and opposing evidence; drives decay rather than growing from unanswered messages. Self-directed action outcomes and explicit contact feedback become evidence for later appraisal, orientation, self-directed work and Dream.
+
+One structured, tool-free appraisal chooses silence, local chat, send, defer, or discard, and may adopt one grounded self-authored goal. It selects its next reconsideration time (60–3600 seconds); changed evidence can wake appraisal sooner, with a one-minute model-call floor. Waking never mandates contact. The old two-/four-hour social-message trigger and direct Surface/Interrupt publication paths are removed.
+
+All spontaneous messages pass through durable quiet hours, confidence, rolling daily quota, minimum spacing, exact normalized topic dedupe, busyness, and expiry checks. Defaults: three messages per rolling day, at least one hour apart, quiet 22:00–08:00 local time, no quiet-hour urgency bypass. A dismissal reduces the daily allowance to one for 24 hours. No feedback means unknown reception, not rejection. Semantic novelty is not guaranteed by exact topic dedupe.
+
+Telegram requires both a bot token and positive private owner chat ID; chat type and sender must match. Inbound receipts, conversation-scoped replies and a transactional outbox survive restarts. Receiver and sender are independent futures inside one supervised task. Only explicit provider receipts mark delivery confirmed; an interrupted/ambiguous send becomes uncertain, is not blindly retried, and retains its contact-budget reservation. Pause prevents new delivery claims (already-started network requests cannot be recalled). Long replies are split without truncating, and private metadata blocks are removed.
+
+The authenticated `GET /v1/agent/continuity` endpoint exposes learned state, the latest decision/next wake, and recent contact outcomes. `POST /v1/agent/contacts/:id/feedback` accepts `{"feedback":"welcomed"}` or `{"feedback":"dismissed"}`; Telegram outreach includes equivalent buttons. Settings → General configures identity, owner credentials and contact limits.
+
+Linux presence uses bounded probes. Wayland uses session idle hints when published; missing signals remain unknown. Chat silence is not substituted for desktop inactivity. Screen and camera access remain separately opt-in.
 
 Formal persona capture, screen capture, camera capture, memory-design evolution, and heartbeat automation remain opt-in. Ambient orientation, journal/concerns, and bounded Dream consolidation default on.
 
@@ -13,7 +25,7 @@ Formal persona capture, screen capture, camera capture, memory-design evolution,
 
 ```mermaid
 flowchart TD
-    UI["Desktop UI"] -->|"authenticated REST / WebSocket"| API["Persistent local backend"]
+    UI["Desktop UI / lifetime owner"] -->|"authenticated REST / WebSocket"| API["UI-owned local backend"]
     API --> SUP["Agent-loop supervisor"]
     SUP -->|"restart after error or panic"| LOOP["Living Loop"]
 
@@ -85,6 +97,9 @@ flowchart TD
 | Dream | `dream_consolidations` | Append-oriented, revisable continuity artifacts |
 | Event receipts/cadence | `agent_state` | Bounded external-event dedupe and separate attempt/outcome timestamps |
 | Persona history | `persona_history` | Optional explicit self-reflection only; not required for temporal self-context |
+| Learned continuity | `self_claims`, `agent_drives`, `lived_outcomes` | Revisable beliefs, decaying priorities and observed outcomes |
+| Appraisal decisions | `continuity_decisions` | Decision plus immutable evidence snapshot and next wake |
+| Communication | `communication_intents`, `delivery_outbox`, `connector_receipts` | Chosen contact, policy reservation, provider outcome and inbound dedupe |
 
 The older `pending_thoughts_queue` remains for compatibility/debugging. Actionable orientation thoughts now use `agent_intentions`.
 

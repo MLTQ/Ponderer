@@ -264,10 +264,26 @@ impl SettingsPanel {
         ui.add_space(8.0);
 
         ui.horizontal(|ui| {
-            ui.label("Username:");
+            ui.label("Agent name:");
             ui.text_edit_singleline(&mut self.config.username);
         });
         ui.label("Name displayed in posts");
+        ui.horizontal(|ui| {
+            ui.label("Your name:");
+            ui.text_edit_singleline(&mut self.config.operator_name);
+        });
+        ui.label("Relationship context:");
+        ui.text_edit_multiline(&mut self.config.relationship_description);
+        ui.label("Identity boundaries (one per line; reflections cannot override these):");
+        let mut boundaries = self.config.identity_boundaries.join("\n");
+        if ui.text_edit_multiline(&mut boundaries).changed() {
+            self.config.identity_boundaries = boundaries
+                .lines()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
+        }
         ui.add_space(16.0);
 
         ui.separator();
@@ -277,7 +293,10 @@ impl SettingsPanel {
         ui.horizontal(|ui| {
             ui.label("Bot token:    ");
             let mut token_str = self.config.telegram_bot_token.clone().unwrap_or_default();
-            if ui.text_edit_singleline(&mut token_str).changed() {
+            if ui
+                .add(egui::TextEdit::singleline(&mut token_str).password(true))
+                .changed()
+            {
                 self.config.telegram_bot_token = if token_str.trim().is_empty() {
                     None
                 } else {
@@ -305,7 +324,7 @@ impl SettingsPanel {
         });
         ui.label(
             egui::RichText::new(
-                "Optional but recommended — restricts the bot to your account only.\n\
+                "Required: your positive private chat ID. Groups and other senders are rejected.\n\
                  To find your ID: message the bot, then open\n\
                  https://api.telegram.org/bot<TOKEN>/getUpdates",
             )
@@ -313,10 +332,40 @@ impl SettingsPanel {
             .weak(),
         );
         ui.label(
-            egui::RichText::new("Telegram settings take effect after restart.")
-                .small()
-                .color(egui::Color32::from_rgb(200, 180, 100)),
+            egui::RichText::new(
+                "Settings apply on Save. Telegram stops when this UI's backend stops.",
+            )
+            .small()
+            .color(egui::Color32::from_rgb(200, 180, 100)),
         );
+        ui.separator();
+        ui.heading("Chosen outreach");
+        ui.label("The agent decides whether there is a reason to speak. These are limits, not a schedule.");
+        let policy = &mut self.config.outreach;
+        ui.checkbox(&mut policy.enabled, "Allow spontaneous messages");
+        ui.checkbox(
+            &mut policy.telegram_enabled,
+            "Allow spontaneous Telegram messages (otherwise local chat)",
+        );
+        ui.horizontal(|ui| {
+            ui.label("Minimum spacing (seconds):");
+            ui.add(egui::DragValue::new(&mut policy.min_interval_secs).range(60..=604800));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Maximum messages per rolling 24 hours:");
+            ui.add(egui::DragValue::new(&mut policy.max_per_day).range(0..=20));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Quiet hours, local time (equal hours disables):");
+            ui.add(egui::DragValue::new(&mut policy.quiet_start_hour).range(0..=23));
+            ui.label("to");
+            ui.add(egui::DragValue::new(&mut policy.quiet_end_hour).range(0..=23));
+        });
+        ui.checkbox(
+            &mut policy.allow_urgent_during_quiet,
+            "Allow evidence-backed urgent contact during quiet hours",
+        );
+        ui.label("Pause stops queued Telegram sends as well as cognition. Replies are not spontaneous outreach.");
     }
 
     fn render_behavior_tab(&mut self, ui: &mut egui::Ui) {

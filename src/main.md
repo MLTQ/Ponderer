@@ -20,7 +20,7 @@ Desktop launcher entry point. Supports:
 - **Interacts with**: `ponderer_backend::runtime::BackendRuntime`, `ponderer_backend::server::serve_backend`.
 
 ### `launch_backend_process()` / `wait_for_backend_socket_ready()`
-- **Does**: Spawns the current executable in backend mode, injects bind/token env, and waits for local socket readiness. UI-owned children receive a parent-death pipe; persistent Unix children enter a separate process group and disconnect standard streams from the UI.
+- **Does**: Spawns the current executable in backend mode, injects bind/token env, and waits for local socket readiness. Every desktop-owned child receives a parent-death pipe; there is no persistent-child path.
 - **Interacts with**: local process manager, localhost networking.
 
 ### `BackendProcess::shutdown()` / `Drop`
@@ -31,7 +31,7 @@ Desktop launcher entry point. Supports:
 ### Local backend discovery
 - **Does**: Stores a private `ponderer_backend.json` endpoint/token/PID record beside the primary config, validates its loopback-only URL and authenticated health payload, removes unreachable stale records, and reuses the living backend on later UI launches.
 - **Interacts with**: `ApiClient::health`, `AgentConfig::config_path`, `PONDERER_BACKEND_DISCOVERY_FILE`.
-- **Rationale**: Prevents duplicate backends during concurrent desktop launches and supports the explicit persistent-lifetime mode without weakening default UI ownership.
+- **Rationale**: Prevents duplicate backends during concurrent desktop launches. Reusing a child does not transfer ownership: its original UI still controls its lifetime.
 - **Failure behavior**: Discovery is replaced through a uniquely named private temporary file; if socket readiness, authenticated health validation, or persistence fails, the just-launched backend is stopped instead of being left undiscoverable. A reachable endpoint that fails authenticated health blocks duplicate launch rather than being treated as stale. The synchronous health probe creates its Tokio timeout inside its private runtime context, so desktop bootstrap never depends on an ambient reactor.
 
 ### Backend launch lease
@@ -54,8 +54,8 @@ Desktop launcher entry point. Supports:
 - The generated token is persisted with owner-only permissions on Unix so concurrent UI processes do not spawn a second agent over the same state.
 - Discovery only accepts explicit HTTP loopback IP endpoints and local API clients bypass ambient HTTP proxies so the bearer token stays on the host.
 - UI-owned lifetime is the safe default. Normal window close forcibly stops the child, unwinding drops also stop it, and loss of the frontend process closes the ownership pipe so the backend exits even after a crash or force-close.
-- Set `PONDERER_BACKEND_LIFETIME=persistent` to opt into an always-on child. Persistent Unix children use a separate process group and null standard streams so they survive the GUI and its launching terminal.
-- Full per-user service management, bounded durable logs, upgrade handoff, and equivalent Windows lifecycle isolation remain tracked in `Ponderer-v88`.
+- `PONDERER_BACKEND_LIFETIME=persistent` is ignored. Window-close shutdown is mandatory, not a service-management defect.
+- No per-user service is installed. Explicit external/backend-only development modes remain separate from desktop-owned lifecycle guarantees.
 - `ponderer_backend.launch.lock` is persistent lock metadata, not a live-PID sentinel; do not delete it while launchers may be active.
 - `PONDERER_BACKEND_LIFETIME=ui` states the default behavior explicitly. Unknown lifetime values fail safe to UI ownership.
 - Set `PONDERER_BACKEND_DISCOVERY_FILE` to override the local discovery record path.
