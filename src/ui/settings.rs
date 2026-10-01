@@ -193,7 +193,7 @@ impl SettingsPanel {
         mut model_controls: impl FnMut(&mut egui::Ui, &mut AgentConfig),
     ) -> Option<AgentConfig> {
         self.ensure_valid_selected_tab();
-        ui.heading("SETTINGS / RUNTIME CONFIGURATION");
+        ui.heading("Settings");
         self.render_tab_bar(ui);
         ui.separator();
         let body_height = (ui.available_height() - 85.0).max(60.0);
@@ -254,19 +254,18 @@ impl SettingsPanel {
                 self.revert_drafts();
             }
             ui.small(if self.has_unsaved_changes() {
-                "Unsaved configuration / appearance previews live"
+                "Unsaved changes"
             } else {
-                "Saved configuration"
+                "Saved"
             });
         });
         result
     }
 
     fn render_appearance_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Appearance / base color");
-        ui.label("One base color derives the workbench, controls, chat, and sphere palette.");
+        ui.heading("Appearance");
         ui.horizontal(|ui| {
-            ui.label("Base color:");
+            ui.label("Base color:").on_hover_text("Derives panel, control, chat and sphere colors. Warning and error colors stay amber and red.");
             ui.color_edit_button_srgb(&mut self.config.appearance.base_color);
             let [r, g, b] = self.config.appearance.base_color;
             ui.monospace(format!("#{r:02X}{g:02X}{b:02X}"));
@@ -285,10 +284,6 @@ impl SettingsPanel {
                 }
             }
         });
-        ui.small(
-            "Text contrast is derived automatically. Warning and error hues remain amber/red.",
-        );
-        ui.small("Preview immediately; Save & apply persists it. Revert drafts restores saved appearance.");
         let palette = super::theme::Palette::from_config(&self.config.appearance);
         ui.horizontal_wrapped(|ui| {
             for (label, color) in [

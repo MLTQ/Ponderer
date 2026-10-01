@@ -1,5 +1,9 @@
 # settings.rs
 
+Visible headings are concise (Settings, Appearance); base-color explanations are
+attached to the control tooltip. Live preview, saved/revert behavior, provider
+isolation and warning colors are unchanged.
+
 ## Purpose
 Implements the embedded Settings workspace for the native desktop UI. It keeps core agent settings in fixed tabs and appends schema-driven settings tabs from discovered plugin manifests.
 

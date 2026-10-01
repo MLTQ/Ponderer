@@ -225,10 +225,10 @@ impl TokenMonitorState {
             logprob: point.logprob,
             entropy: point.entropy,
             metric_source: match (point.logprob.is_some(), point.entropy.is_some()) {
-                (true, true) => "provider logprob + entropy / lexical novelty",
-                (true, false) => "provider logprob / lexical novelty",
+                (true, true) => "provider logprob, entropy and lexical novelty",
+                (true, false) => "provider logprob and lexical novelty",
                 (false, true) => "lexical proxy + provider entropy",
-                (false, false) => "lexical proxy / no provider probabilities",
+                (false, false) => "lexical proxy (no provider probabilities)",
             },
             source: &path.source,
         })
@@ -510,16 +510,16 @@ fn render_trace_controls(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
                     .inspect_generation
                     .as_deref()
                     .map(short_id)
-                    .unwrap_or("Live / latest"),
+                    .unwrap_or("Latest"),
             )
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut state.inspect_generation, None, "Live / latest");
+                ui.selectable_value(&mut state.inspect_generation, None, "Latest");
                 for path in &state.paths {
                     if !path.trace.is_empty() {
                         ui.selectable_value(
                             &mut state.inspect_generation,
                             Some(path.generation_id.clone()),
-                            format!("{} / {}", short_id(&path.generation_id), path.source),
+                            format!("{} · {}", short_id(&path.generation_id), path.source),
                         );
                     }
                 }
@@ -535,7 +535,7 @@ fn render_trace_controls(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
             }
         }
         if let Some((_, point)) = state.readout_point() {
-            ui.monospace(format!("token / {}", render_token_label(&point.token)));
+            ui.monospace(format!("Token: {}", render_token_label(&point.token)));
         }
     });
     ui.add_space(3.0);

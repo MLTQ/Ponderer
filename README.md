@@ -40,6 +40,9 @@ The snapshot destination must not already exist. See [workbench](src/ui/workbenc
 Build model-specific directions from matched examples, compare neutral and steered
 completions, and apply manual state controls for one UI session. Managed inference
 and extraction stop when the owning UI closes.
+Local Qwen3.5-family inference uses a tool-capable chat template even when a GGUF
+conversion ships a simplified one; all requested affects are forwarded as one
+native vector list. Bare thinking labels and unparsed tool calls fail visibly.
 
 ## Plugin System
 

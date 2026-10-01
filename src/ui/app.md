@@ -1,5 +1,8 @@
 # app.rs
 
+Workspace navigation calls the continuity/journal view Mind; runtime ownership
+remains in the launcher/lifecycle code rather than repeated decorative labels.
+
 ## Purpose
 
 `AgentApp` owns the native frontend's API client, event intake, backend status,

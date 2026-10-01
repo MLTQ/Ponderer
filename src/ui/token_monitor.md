@@ -1,5 +1,9 @@
 # token_monitor.rs
 
+The persistent rail heading is Novelty. Metric provenance remains explicit, with
+plain text/colon separators rather than slash-separated duplicate labels. The
+latest/retained-generation controls and metric calculations are unchanged.
+
 ## Purpose
 
 Native novelty instrument in the persistent workbench rail. Each generation owns

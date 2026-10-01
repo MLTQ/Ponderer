@@ -30,7 +30,7 @@ enum Workspace {
 impl Workspace {
     const ALL: [(Self, &'static str); 5] = [
         (Self::Conversation, "Conversation"),
-        (Self::Mind, "Mind / journal"),
+        (Self::Mind, "Mind"),
         (Self::Identity, "Identity"),
         (Self::AffectLab, "Affect lab"),
         (Self::Settings, "Settings"),

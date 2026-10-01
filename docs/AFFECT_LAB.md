@@ -26,7 +26,7 @@ Models → Model connection**; the **Affect lab** workspace contains experiments
    context. Choose CPU threads, context and KV/cache options; the 200k preset
    preserves executable, GPU and offload mode. **Load local model** inspects metadata then queues
    actual weight/KV allocation, with visible progress and native process state.
-   **Load weights / retry** can reload after a test.
+   **Retry loading** can reload after a test.
 3. Open **Example library**. Contentment, satisfaction, excitement, curiosity and
    fear have editable starter target/control pairs; custom affects start with two
    blank matched situations. **Create/Rebuild … control from these examples**
@@ -79,7 +79,7 @@ KV and recurrent caches; identical profiles can reuse the host. Requests and
 experiments are serialized to avoid cross-request steering or loading two copies
 of the model. Neutral/reset selects zero steering for subsequent requests.
 
-**Stop / restore provider** restores the prior URL, key, model and reflection/
+**Stop local model** restores the prior URL, key, model and reflection/
 decision overrides. Ephemeral URLs and tokens are not saved into ordinary settings.
 Closing the owning UI terminates the backend, worker, native supervisors and model
 or extraction process groups. This feature currently requires Linux and the UI's
@@ -101,6 +101,22 @@ useful outputs. Latest matching discovery/study evidence is restored on worker
 startup. Rebuilt vectors or changed inference settings make recommendations
 historical and disable adoption. Model weights are read only.
 Changing model files or vector content invalidates their fingerprints.
+
+Qwen3.5-family models (including this Qwen3.8-named GGUF) use the bundled upstream
+tool-capable template: the checkpoint's original simplified template drops tool
+definitions/results. Other architectures retain embedded templates. Thinking is
+disabled for managed inference. Template identity is included in evidence, and
+old recommendations are historical after a format change. Current engines receive
+all controls in one comma-separated argument; repeating the native flag used to
+silently keep only the last vector. Earlier multi-control studies must be rerun.
+
+The agent refuses to treat thought-only text, a bare `Thinking:` or unparsed tool
+markup as a finished answer. If this happens with a mix, reset to neutral before
+retrying; experimental controls can still degrade model behavior. Raw tool markup
+is never executed as a substitute for parsed structured calls.
+
+For opt-in short real-model chat, tool-result and streaming regression checks,
+see `scripts/validate_local_chat.md`. This changes no live settings or conversation.
 
 For a different llama.cpp installation, set `PONDERER_LLAMA_INCLUDE` to the matching
 header directory and `PONDERER_LLAMA_LIB` to the library directory before starting

@@ -43,12 +43,9 @@ impl AgentApp {
             let colors = theme::palette(ui);
             ui.horizontal_wrapped(|ui| {
                 crate::ui::sprite::render_agent_sprite(ui, &self.current_state, self.avatars.as_mut());
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(self.settings_panel.config.username.to_uppercase()).monospace().size(16.0));
-                    ui.small("PERSONAL AGENT / LOCAL WORKBENCH");
-                });
+                ui.label(RichText::new(self.settings_panel.config.username.to_uppercase()).monospace().size(16.0));
                 ui.separator();
-                if self.ui_snapshot {ui.small("ISOLATED UI SNAPSHOT / SYNTHETIC STATE");}
+                if self.ui_snapshot {ui.small("Isolated snapshot · synthetic data");}
                 ui.monospace(format!("{:?}", self.current_state));
                 if let Some(since) = self.visual_state_since {
                     let elapsed = chrono::Utc::now().signed_duration_since(since).num_seconds().max(0) as u64;
@@ -85,7 +82,7 @@ impl AgentApp {
                     ui.menu_button("Permissions", |ui| {
                         ui.small("Reflection does not expand tool permissions.");
                         ui.label("Self-directed (Loose) permits local shell and filesystem work without routine approval. External and identity gates remain.");
-                        if ui.button("Review / arm self-directed work").clicked() {
+                        if ui.button("Arm self-directed work").clicked() {
                             self.show_loose_arm_confirmation = true;
                             ui.close_menu();
                         }
@@ -103,8 +100,6 @@ impl AgentApp {
                 for (workspace, title) in Workspace::ALL {
                     if ui.selectable_label(self.workspace == workspace, title).clicked() {self.select_workspace(workspace);}
                 }
-                ui.separator();
-                ui.small("UI OWNS RUNTIME");
                 if self.settings_panel.has_unsaved_changes() {ui.colored_label(colors.warning, "UNSAVED DRAFT");}
                 if let Some(error) = &self.settings_panel.save_error {ui.colored_label(colors.error, error);}
             });
@@ -119,7 +114,7 @@ impl AgentApp {
                         for (tool, reason) in &self.pending_approvals {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(
-                                    RichText::new(format!("! APPROVAL / {tool}"))
+                                    RichText::new(format!("Approval: {tool}"))
                                         .monospace()
                                         .color(theme::palette(ui).warning),
                                 );
@@ -138,12 +133,7 @@ impl AgentApp {
 
         egui::TopBottomPanel::bottom("workbench_footer").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.small("CLOSE UI -> STOP AGENT + LOCAL HOST");
-                ui.separator();
-                ui.small(format!(
-                    "provider / {}",
-                    self.settings_panel.config.llm_model
-                ));
+                ui.small(format!("Model: {}", self.settings_panel.config.llm_model));
             });
         });
         egui::TopBottomPanel::bottom(if self.show_event_tape {
@@ -184,29 +174,29 @@ impl AgentApp {
         egui::SidePanel::right("instrument_rail").resizable(true).default_width(320.0)
             .width_range(250.0..=520.0).show(ctx, |ui| {
                 egui::ScrollArea::vertical().id_salt("instrument_rail_scroll").show(ui, |ui| {
-                    label(ui, "SURPRISAL / NOVELTY");
+                    label(ui, "Novelty");
                     token_monitor::render(ui, &mut self.token_monitor);
-                    ui.small(format!("{} samples / {} paths / latest {:.3}", self.token_monitor.trace_len(), self.token_monitor.path_count(), self.token_monitor.last_novelty()));
+                    ui.small(format!("{} samples · {} paths · latest {:.3}", self.token_monitor.trace_len(), self.token_monitor.path_count(), self.token_monitor.last_novelty()));
                     if let Some(readout) = self.token_monitor.latest_readout() {
                         egui::Grid::new("token_readout").num_columns(2).show(ui, |ui| {
                             ui.small("selected novelty");ui.monospace(format!("{:.3}",readout.novelty));ui.end_row();
                             ui.small("logprob");ui.monospace(readout.logprob.map(|n|format!("{n:.3}")).unwrap_or_else(||"n/a".into()));ui.end_row();
                             ui.small("entropy");ui.monospace(readout.entropy.map(|n|format!("{n:.3}")).unwrap_or_else(||"n/a".into()));ui.end_row();
                         });
-                        ui.small(format!("metric / {}", readout.metric_source));
-                        ui.small(format!("generation / {}", readout.source));
-                    } else {ui.small("No token samples yet / no metric inferred from idle motion");}
-                    egui::CollapsingHeader::new("Mapping / camera / retention").show(ui, |ui| {
+                        ui.small(format!("Metric: {}", readout.metric_source));
+                        ui.small(format!("Generation: {}", readout.source));
+                    } else {ui.small("No token samples yet.");}
+                    egui::CollapsingHeader::new("About this plot").show(ui, |ui| {
                         ui.small("A deterministic novelty walk, not a projection of hidden activations. Lexical fallback is used when provider probabilities are missing.");
-                        ui.small("Drag to orbit / scroll to zoom / double-click to reset. Camera motion does not add samples.");
+                        ui.small("Drag to orbit, scroll to zoom, double-click to reset. Camera motion does not add samples.");
                     });
                     ui.separator();
                     self.render_intention(ui);
                     ui.separator();
-                    label(ui, "LAST JOURNAL ENTRY / MODEL-REPORTED");
+                    label(ui, "Journal");
                     if let Some(journal) = &self.last_journal {ui.add(egui::Label::new(journal).wrap());} else {ui.weak("No journal entry received in this session.");}
-                    if let Some(action) = &self.last_action {ui.separator();label(ui,"LAST OUTCOME / ACTION");ui.add(egui::Label::new(action).wrap());}
-                    egui::CollapsingHeader::new("Live stream / raw text").show(ui, |ui| {
+                    if let Some(action) = &self.last_action {ui.separator();label(ui,"Last action");ui.add(egui::Label::new(action).wrap());}
+                    egui::CollapsingHeader::new("Raw stream").show(ui, |ui| {
                         egui::ScrollArea::vertical().max_height(160.0).id_salt("live_stream_scroll").stick_to_bottom(true).show(ui, |ui| {
                             if let Some(text) = &self.live_stream_text {ui.add(egui::Label::new(RichText::new(last_n_chars(text,1200)).monospace().small()).wrap());}
                             else {ui.weak("No stream received.");}
@@ -261,23 +251,16 @@ impl AgentApp {
     }
 
     fn render_intention(&self, ui: &mut egui::Ui) {
-        label(
-            ui,
-            if self.loose_mode {
-                "SELF-DIRECTED / DURABLE GOAL"
-            } else {
-                "CURRENT INTENTION"
-            },
-        );
+        label(ui, if self.loose_mode { "Goal" } else { "Intention" });
         if let Some(intention) = &self.current_intention {
             ui.add(egui::Label::new(&intention.summary).wrap());
             ui.small(format!(
-                "status / {} / episodes / {}",
+                "{} · {} attempts",
                 intention.status, intention.attempt_count
             ));
-            ui.add(egui::Label::new(format!("reason / {}", intention.motivation)).wrap());
+            ui.add(egui::Label::new(format!("Reason: {}", intention.motivation)).wrap());
             if let Some(outcome) = &intention.last_outcome {
-                ui.add(egui::Label::new(format!("outcome / {outcome}")).wrap());
+                ui.add(egui::Label::new(format!("Outcome: {outcome}")).wrap());
             }
         } else {
             ui.weak("No durable intention reported.");
@@ -285,14 +268,14 @@ impl AgentApp {
     }
 
     fn render_mind(&mut self, ui: &mut egui::Ui) {
-        ui.heading("MIND / CONTINUITY & JOURNAL");
+        ui.heading("Mind");
         egui::ScrollArea::vertical()
             .id_salt("mind_workspace")
             .show(ui, |ui| {
                 self.render_intention(ui);
                 if let Some(orientation) = &self.last_orientation {
                     ui.separator();
-                    label(ui, "ORIENTATION / MODEL-REPORTED");
+                    label(ui, "Orientation");
                     ui.label(&orientation.disposition);
                     ui.small(format!("{} anomalies", orientation.anomaly_count));
                 }
@@ -427,7 +410,7 @@ impl AgentApp {
                     .layout(layout),
             );
             progress_ui.set_clip_rect(progress_rect.intersect(ui.clip_rect()));
-            egui::CollapsingHeader::new("LIVE TURN / TOOL OUTPUT")
+            egui::CollapsingHeader::new("Live tools")
                 .id_salt("live_agent_turn")
                 .default_open(true)
                 .show(&mut progress_ui, |ui| {
@@ -450,7 +433,6 @@ impl AgentApp {
         );
         composer_ui.set_clip_rect(composer_rect.intersect(ui.clip_rect()));
         composer_ui.separator();
-        composer_ui.small("MESSAGE / Enter sends / Shift+Enter adds a newline");
         composer_ui.horizontal(|ui| {
             let response = ui.add_sized(
                 [(ui.available_width() - 75.0).max(80.0), 64.0],
@@ -469,7 +451,10 @@ impl AgentApp {
                         && !input.modifiers.command
                         && !input.modifiers.alt
                 });
-            let clicked = ui.button("Send").clicked();
+            let clicked = ui
+                .button("Send")
+                .on_hover_text("Enter to send; Shift+Enter for a new line.")
+                .clicked();
             if (shortcut || clicked) && !self.user_input.trim().is_empty() {
                 let message = self.user_input.trim().to_string();
                 self.streaming_chat_preview = None;
@@ -576,12 +561,7 @@ mod tests {
                     scope.1.expand(1.0).contains_rect(scope.0),
                     "{workspace} {size:?}: scope clipped"
                 );
-                for expected in [
-                    "SURPRISAL / NOVELTY",
-                    "Allow this session",
-                    "Dismiss",
-                    "CLOSE UI -> STOP AGENT + LOCAL HOST",
-                ] {
+                for expected in ["Novelty", "Allow this session", "Dismiss"] {
                     let (_, rect, clip) = labels
                         .iter()
                         .find(|(text, _, _)| text == expected)
@@ -590,6 +570,14 @@ mod tests {
                         clip.expand(1.0).contains_rect(*rect),
                         "{workspace} {size:?}: clipped {expected}: {rect:?} by {clip:?}"
                     );
+                }
+                for removed in [
+                    "PERSONAL AGENT / LOCAL WORKBENCH",
+                    "UI OWNS RUNTIME",
+                    "SURPRISAL / NOVELTY",
+                    "CLOSE UI -> STOP AGENT + LOCAL HOST",
+                ] {
+                    assert!(!labels.iter().any(|(text, _, _)| text == removed));
                 }
                 if workspace == "conversation" {
                     let (_, rect, clip) =

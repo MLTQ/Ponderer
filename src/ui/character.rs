@@ -64,7 +64,7 @@ impl CharacterPanel {
         let system_prompt_preview = self.build_system_prompt_preview();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.heading("IDENTITY / CORE & CHARACTER");
+                    ui.heading("Identity");
                     ui.small("Operator-owned boundaries are separate from model-reported reflections.");
                     ui.horizontal(|ui| {
                         ui.label("Agent name:");
@@ -76,12 +76,12 @@ impl CharacterPanel {
                     });
                     ui.label("Relationship context:");
                     ui.add(egui::TextEdit::multiline(&mut self.config.relationship_description).desired_width(f32::INFINITY));
-                    ui.label("Fixed boundaries / one per line / reflection cannot edit these:");
+                    ui.label("Fixed boundaries (one per line):");
                     let mut boundaries = self.config.identity_boundaries.join("\n");
                     if ui.add(egui::TextEdit::multiline(&mut boundaries).desired_width(f32::INFINITY)).changed() {
                         self.config.identity_boundaries = boundaries.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string).collect();
                     }
-                    ui.label("Guiding principles / one per line:");
+                    ui.label("Guiding principles (one per line):");
                     let mut principles = self.config.guiding_principles.join("\n");
                     if ui.add(egui::TextEdit::multiline(&mut principles).desired_width(f32::INFINITY)).changed() {
                         self.config.guiding_principles = principles.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string).collect();
@@ -122,7 +122,7 @@ impl CharacterPanel {
                         }
 
                         ui.vertical(|ui| {
-                            ui.heading("Character card / optional");
+                            ui.heading("Character card");
                             ui.label("Drop a PNG character card here or click to browse");
 
                             if ui.button("📁 Browse for Character Card PNG").clicked() {

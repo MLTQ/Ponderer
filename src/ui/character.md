@@ -1,5 +1,8 @@
 # character.rs
 
+The workspace heading is Identity. Boundary/principle labels describe the fields
+without decorative slash-separated subtitles; boundary enforcement is unchanged.
+
 ## Purpose
 Implements the embedded Identity workspace: agent/operator names, relationship, fixed boundaries, guiding principles, optional PNG character cards, execution-state artwork and prompt preview. It shares the Settings configuration draft.
 

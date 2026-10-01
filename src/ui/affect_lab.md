@@ -1,5 +1,9 @@
 # affect_lab.rs
 
+Workspace/action labels are concise, without decorative slash-separated subtitles.
+Scientific warnings, uncalibrated control strengths, requested/applied state and
+actual job errors remain visible. GPU device labels use dot-separated data fields.
+
 Shared asynchronous model/experiment controller. Model connection controls render
 inside Settings / Models, switching between API and local GGUF editors. The embedded
 Affect lab workspace has Affect mixer, Example library, Test & evidence and Discover lever panes. Loading

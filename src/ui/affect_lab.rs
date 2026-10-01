@@ -21,13 +21,13 @@ struct LabReply {
 fn gpu_device_label(device: &GpuDevice) -> String {
     let memory = match (device.memory_free_mib, device.memory_total_mib) {
         (Some(free), Some(total)) => format!(
-            " / {:.1} GiB free of {:.1}",
+            " · {:.1} GiB free of {:.1}",
             free as f64 / 1024.0,
             total as f64 / 1024.0
         ),
         _ => String::new(),
     };
-    format!("{} / {}{}", device.id, device.name, memory)
+    format!("{} · {}{}", device.id, device.name, memory)
 }
 #[derive(Clone, Default)]
 struct ExamplePair {
@@ -481,7 +481,7 @@ impl AffectLabPanel {
                 if ui
                     .add_enabled(
                         self.pending_action.is_none(),
-                        egui::Button::new("Stop local model / restore API"),
+                        egui::Button::new("Restore API provider"),
                     )
                     .clicked()
                 {
@@ -567,7 +567,7 @@ impl AffectLabPanel {
                 _ => "Placement: explicit partial GPU offload",
             });
             ui.small("No automatic multi-GPU split, CPU fallback, or context reduction. All-GPU loading fails if VRAM is insufficient.");
-            ui.collapsing("Advanced / GPU–CPU offload", |ui| {
+            ui.collapsing("Advanced offload", |ui| {
                 ui.selectable_value(&mut self.settings.gpu_layers, -1, "All layers on GPU (default)");
                 let partial = if self.settings.gpu_layers > 0 { self.settings.gpu_layers } else { 32 };
                 ui.selectable_value(&mut self.settings.gpu_layers, partial, "Partial GPU offload");
@@ -584,7 +584,7 @@ impl AffectLabPanel {
             ui.collapsing("Context, KV cache and attention", |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Context tokens"); ui.add(egui::DragValue::new(&mut self.settings.context_size).range(1024..=MAX_CONTEXT_SIZE));
-                    if ui.button("200k / Q4_1 preset").clicked() { self.settings.apply_200k_preset(); }
+                    if ui.button("200k Q4_1 preset").clicked() { self.settings.apply_200k_preset(); }
                 });
                 ui.checkbox(&mut self.settings.unified_kv_cache, "Unified KV cache");
                 ui.horizontal_wrapped(|ui| {
@@ -619,7 +619,7 @@ impl AffectLabPanel {
             if ui
                 .add_enabled(
                     self.running() && self.available() && !self.status["native_pid"].is_number(),
-                    egui::Button::new("Load weights / retry"),
+                    egui::Button::new("Retry loading"),
                 )
                 .clicked()
             {
@@ -637,7 +637,7 @@ impl AffectLabPanel {
             if ui
                 .add_enabled(
                     self.can_stop() && self.pending_action.is_none(),
-                    egui::Button::new("Stop / restore provider"),
+                    egui::Button::new("Stop local model"),
                 )
                 .clicked()
             {
@@ -686,11 +686,13 @@ impl AffectLabPanel {
         client: &ApiClient,
         runtime: &tokio::runtime::Runtime,
     ) {
-        ui.heading("AFFECT LAB / STEERING & EVIDENCE");
+        ui.heading("Affect lab");
         ui.small("Model-specific interventions, not measured feelings.");
         self.errors(ui);
         if !self.running() {
-            ui.label("Load a local GGUF in Settings / Models / Model connection. API connections cannot inject vectors.");
+            ui.label(
+                "Load a local GGUF in Settings → Models. API connections cannot inject vectors.",
+            );
             if ui.button("Open model settings").clicked() {
                 self.open_settings = true;
                 self.local_view = true;
@@ -801,7 +803,7 @@ impl AffectLabPanel {
         ui.label(format!("Combined intervention: {:.2} / 1.00", self.total()));
         ui.small("Signed native multipliers, not measured mood levels. Positive/negative polarity must be tested; zero = neutral. Absolute strengths share a budget of one: opposite signs cannot cancel it. Equal strengths need not have equal effects.");
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Neutral / reset all").clicked() {
+            if ui.button("Reset to neutral").clicked() {
                 self.strengths.clear();
                 self.gain = 1.0;
                 // Reset must remain possible even after invalid draft layer edits.
@@ -877,10 +879,7 @@ impl AffectLabPanel {
             })
             .cloned();
         if let Some(source) = source {
-            if ui
-                .small_button("Restore saved / starter examples")
-                .clicked()
-            {
+            if ui.small_button("Restore examples").clicked() {
                 let pairs = source["pairs"]
                     .as_array()
                     .map(|pairs| {
@@ -904,7 +903,7 @@ impl AffectLabPanel {
                 .iter()
                 .find(|v| v["concept"].as_str() == Some(&self.concept))
         }) {
-            ui.collapsing("Built control provenance / geometry", |ui| {
+            ui.collapsing("Control provenance", |ui| {
                 ui.small(format!("Model SHA-256: {}", vector["model_sha256"]));
                 ui.small(format!("Recipe SHA-256: {}", vector["recipe_sha256"]));
                 ui.small(format!("Geometry: {}", vector["geometry"]));
@@ -947,7 +946,7 @@ impl AffectLabPanel {
                                 .desired_rows(2)
                                 .desired_width(f32::INFINITY),
                         );
-                        ui.label("Control / contrast state");
+                        ui.label("Contrast state");
                         ui.add(
                             egui::TextEdit::multiline(&mut pair.control)
                                 .char_limit(512)
@@ -1026,7 +1025,7 @@ impl AffectLabPanel {
         client: &ApiClient,
         runtime: &tokio::runtime::Runtime,
     ) {
-        ui.heading("Find a more / less lever from a label");
+        ui.heading("Discover a lever");
         ui.small("The neutral local model defines the construct, generates eight matched response pairs, derives a vector, searches two layer ranges and both signs, and confirms on new tasks with two seeds and matched shuffled controls. It does not change your agent mix. This can take several minutes and waits for current inference.");
         ui.horizontal(|ui| {
             ui.label("Mood or style");
@@ -1137,7 +1136,7 @@ impl AffectLabPanel {
         if let Some(error) = report["error"].as_str() {
             ui.colored_label(super::theme::palette(ui).error, error);
         }
-        ui.collapsing("More / less effects vs neutral and placebo", |ui| {
+        ui.collapsing("Effects versus neutral and placebo", |ui| {
             ui.small("Scores are 0–4 rubric judgments of observable output. Paired bootstrap intervals are exploratory and conditional on the chosen settings and this judge.");
             if let Some(effects) = report["effects"].as_object() {
                 for (condition, effect) in effects { ui.label(format!("{condition}: Δ {} · interval {} · {} paired outputs", effect["mean_delta"], effect["bootstrap_95"], effect["pairs"])); }
@@ -1158,7 +1157,7 @@ impl AffectLabPanel {
         ui.collapsing("Untouched confirmation tasks — actual outputs", |ui| {
             output_gallery(ui, &report["confirmation"], "discovery_confirmation");
         });
-        ui.collapsing("Accuracy / format outputs", |ui| {
+        ui.collapsing("Task outputs", |ui| {
             output_gallery(ui, &report["integrity_controls"], "discovery_integrity");
         });
         ui.small("The same local model creates examples and judges outputs, although judging runs neutral and hides conditions. Independent human/other-model review is still necessary. A failed discovery is reported as failed, not relabeled a success.");
@@ -1258,7 +1257,7 @@ impl AffectLabPanel {
         ui.collapsing("Larger response-variation study", |ui| {
             self.response_study(ui, client, runtime);
         });
-        ui.collapsing("Review / edit held-out prompts", |ui| {
+        ui.collapsing("Held-out prompts", |ui| {
             for (i, prompt) in self.test_prompts.iter_mut().enumerate() { ui.push_id(i, |ui| {
                 ui.label(format!("Prompt {}", i + 1)); ui.add(egui::TextEdit::multiline(prompt).char_limit(2000).desired_rows(2).desired_width(f32::INFINITY));
             }); }
@@ -1266,9 +1265,9 @@ impl AffectLabPanel {
             ui.small("Review third-person leakage manually. Arithmetic and exact-JSON checks are automatic only on unchanged starter prompts. These are tiny smoke checks, not a quality benchmark.");
         });
         ui.horizontal_wrapped(|ui| {
-            ui.label("Output tokens / prompt"); ui.add(egui::DragValue::new(&mut self.test_tokens).range(4..=256));
+            ui.label("Output tokens per prompt"); ui.add(egui::DragValue::new(&mut self.test_tokens).range(4..=256));
             let valid = !self.test_prompts.is_empty() && self.test_prompts.iter().all(|p| !p.is_empty());
-            if ui.add_enabled(self.available() && !self.dirty && self.total() > 0.0 && valid, egui::Button::new("Compare neutral / half / full mix")).clicked() {
+            if ui.add_enabled(self.available() && !self.dirty && self.total() > 0.0 && valid, egui::Button::new("Compare neutral, half and full mix")).clicked() {
                 self.request(client, runtime, "compare", json!({"profile": self.profile(), "prompts": self.test_prompts, "max_tokens": self.test_tokens}));
             }
         });
@@ -1297,7 +1296,7 @@ impl AffectLabPanel {
             .filter(|r| r["finish_reason"].as_str() == Some("length"))
             .count();
         ui.label(format!(
-            "Accuracy / format smoke checks: {passes}/{} passed · truncated outputs: {truncated}",
+            "Task checks: {passes}/{} passed · truncated outputs: {truncated}",
             checks.len()
         ));
         ui.small(format!(
@@ -1380,7 +1379,7 @@ impl AffectLabPanel {
         if let Some(path) = report["path"].as_str() {
             ui.small(format!("Report: {path}"));
         }
-        ui.collapsing("Reproducibility / exact identities", |ui| {
+        ui.collapsing("Reproducibility", |ui| {
             ui.small(format!("Model SHA-256: {}", report["model_sha256"]));
             ui.small(format!("Vectors/recipes: {}", report["vectors"]));
             ui.small(format!("Inference: {}", report["inference_settings"]));
@@ -1395,8 +1394,8 @@ fn evidence_summary(ui: &mut egui::Ui, summary: &serde_json::Map<String, Value>)
         .striped(true)
         .show(ui, |ui| {
             ui.strong("Condition");
-            ui.strong("Construct scores / 4");
-            ui.strong("Quality / 4");
+            ui.strong("Construct scores (0–4)");
+            ui.strong("Quality (0–4)");
             ui.strong("Checks · cut off");
             ui.end_row();
             for (condition, values) in summary {
@@ -1530,7 +1529,7 @@ mod tests {
         assert!(p.gpu_selection_ready());
         assert!(p
             .selected_gpu_label()
-            .contains("RTX 4090 / 15.0 GiB free of 24.0"));
+            .contains("RTX 4090 · 15.0 GiB free of 24.0"));
         p.settings.apply_200k_preset();
         assert_eq!(p.settings.gpu_device.as_deref(), Some("CUDA0"));
         assert_eq!(p.settings.gpu_layers, -1);
