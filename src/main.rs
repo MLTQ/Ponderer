@@ -78,7 +78,8 @@ fn run_desktop_mode() -> Result<()> {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([600.0, 800.0])
+            .with_inner_size([1240.0, 900.0])
+            .with_min_inner_size([840.0, 640.0])
             .with_title("Ponderer"),
         ..Default::default()
     };

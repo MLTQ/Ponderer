@@ -348,7 +348,7 @@ impl AffectLabPanel {
             .as_deref()
             .or_else(|| self.status["error"].as_str())
         {
-            ui.colored_label(egui::Color32::LIGHT_RED, error);
+            ui.colored_label(super::theme::palette(ui).error, error);
         }
         if let Some(error) = &self.poll_error {
             ui.small(format!("Status temporarily unavailable: {error}"));
@@ -383,7 +383,7 @@ impl AffectLabPanel {
             self.request(client, runtime, "cancel", json!({}));
         }
         if let Some(error) = self.status["job"]["error"].as_str() {
-            ui.colored_label(egui::Color32::LIGHT_RED, error);
+            ui.colored_label(super::theme::palette(ui).error, error);
         }
     }
 
@@ -568,7 +568,7 @@ impl AffectLabPanel {
                 .as_u64()
                 .unwrap_or(0);
             if trained > 0 && self.status["context_size"].as_u64().unwrap_or(0) > trained {
-                ui.colored_label(egui::Color32::YELLOW, format!("Requested context exceeds declared {trained}-token context; no extra RoPE scaling."));
+                ui.colored_label(super::theme::palette(ui).warning, format!("Requested context exceeds declared {trained}-token context; no extra RoPE scaling."));
             }
             if ui.button("Open Affect Lab").clicked() {
                 self.show = true;
@@ -578,34 +578,60 @@ impl AffectLabPanel {
         ui.small("Local options are session-only; Save & Apply does not load weights. All managed processes stop with this UI. Other model overrides are restored on Stop.");
     }
 
-    pub fn render(
+    pub fn render_contents(
         &mut self,
-        ctx: &egui::Context,
+        ui: &mut egui::Ui,
         client: &ApiClient,
         runtime: &tokio::runtime::Runtime,
     ) {
-        if !self.show {
+        ui.heading("AFFECT LAB / STEERING & EVIDENCE");
+        ui.small("Model-specific interventions, not measured feelings.");
+        self.errors(ui);
+        if !self.running() {
+            ui.label("Load a local GGUF in Settings / Models / Model connection. API connections cannot inject vectors.");
+            if ui.button("Open model settings").clicked() {
+                self.open_settings = true;
+                self.local_view = true;
+            }
             return;
         }
-        let mut open = self.show;
-        egui::Window::new("Affect Lab").open(&mut open).default_width(740.0).default_height(700.0).show(ctx, |ui| {
-            ui.label("Experimental activation steering — controls, examples and evidence.");
-            ui.small("Model-specific interventions, not measured feelings or proof of subjective experience."); self.errors(ui);
-            if !self.running() {
-                ui.label("Load a local GGUF in Settings → General → Model connection to enable this lab. API connections cannot inject vectors.");
-                if ui.button("Open model settings").clicked() { self.open_settings = true; self.local_view = true; }
-                return;
+        ui.horizontal_wrapped(|ui| {
+            for (index, label) in [
+                "Affect mixer",
+                "Example library",
+                "Test & evidence",
+                "Discover lever",
+            ]
+            .iter()
+            .enumerate()
+            {
+                ui.selectable_value(&mut self.tab, index, *label);
             }
-            ui.horizontal_wrapped(|ui| {
-                for (i, label) in ["Affect mixer", "Example library", "Test & evidence", "Discover lever"].iter().enumerate() { ui.selectable_value(&mut self.tab, i, *label); }
-                if ui.button("Model settings").clicked() { self.open_settings = true; self.local_view = true; }
-            });
-            self.activity(ui, client, runtime); ui.separator();
-            egui::ScrollArea::vertical().id_salt("affect_lab_content").show(ui, |ui| match self.tab {
-                0 => self.mixer(ui), 1 => self.library(ui, client, runtime), 2 => self.evidence(ui, client, runtime), _ => self.discovery(ui, client, runtime),
-            });
+            if ui.button("Model settings").clicked() {
+                self.open_settings = true;
+                self.local_view = true;
+            }
         });
-        self.show = open;
+        self.activity(ui, client, runtime);
+        ui.separator();
+        egui::ScrollArea::vertical()
+            .id_salt("affect_lab_content")
+            .show(ui, |ui| match self.tab {
+                0 => self.mixer(ui),
+                1 => self.library(ui, client, runtime),
+                2 => self.evidence(ui, client, runtime),
+                _ => self.discovery(ui, client, runtime),
+            });
+    }
+
+    #[cfg(any(test, feature = "ui-snapshot"))]
+    pub fn load_snapshot_fixture(&mut self) {
+        self.accept_status(json!({
+            "running": true, "used_by_agent": false,
+            "concepts": ["contentment", "excitement", "melodramatic"],
+            "vectors": [{"concept": "contentment"},{"concept": "excitement"},{"concept": "melodramatic"}],
+            "requested_profile": {"strengths": {"contentment": 0.2, "excitement": 0.3, "melodramatic": -0.1}, "layer_start": 1, "layer_end": 2}
+        }));
     }
 
     fn mixer(&mut self, ui: &mut egui::Ui) {
@@ -692,7 +718,7 @@ impl AffectLabPanel {
             }
         ));
         if !self.status["used_by_agent"].as_bool().unwrap_or(false) {
-            ui.colored_label(egui::Color32::YELLOW, "The agent still uses its API. This mix affects lab tests only until you select the local provider in Settings.");
+            ui.colored_label(super::theme::palette(ui).warning, "The agent still uses its API. This mix affects lab tests only until you select the local provider in Settings.");
         }
         ui.collapsing("Advanced: layer range", |ui| {
             if ui.add(egui::Slider::new(&mut self.gain, 1.0..=4.0).text("Experimental amplification")).changed() { self.edited(); }
@@ -703,7 +729,7 @@ impl AffectLabPanel {
                 ui.label("through"); let b = ui.add(egui::DragValue::new(&mut self.layer_end).range(1..=max)).changed();
                 if a || b { self.edited(); }
             });
-            if self.layer_start > self.layer_end { ui.colored_label(egui::Color32::LIGHT_RED, "Start layer must not exceed end layer."); }
+            if self.layer_start > self.layer_end { ui.colored_label(super::theme::palette(ui).error, "Start layer must not exceed end layer."); }
             ui.small("Layer changes alter the intervention; retest rather than comparing scores across ranges.");
         });
     }
@@ -947,13 +973,13 @@ impl AffectLabPanel {
             }
         }
         if report["lever_found"].as_bool().unwrap_or(false) {
-            ui.colored_label(egui::Color32::LIGHT_GREEN, "Both directions passed this exploratory model-judged confirmation. Not independent validation.");
+            ui.colored_label(super::theme::palette(ui).accent, "Both directions passed this exploratory model-judged confirmation. Not independent validation.");
             let current = report["current_artifacts"].as_bool().unwrap_or(false)
                 && report["current_inference_settings"]
                     .as_bool()
                     .unwrap_or(false);
             if !current {
-                ui.colored_label(egui::Color32::YELLOW, "Historical evidence: vectors or inference settings changed. Rerun before adopting these settings.");
+                ui.colored_label(super::theme::palette(ui).warning, "Historical evidence: vectors or inference settings changed. Rerun before adopting these settings.");
             }
             ui.horizontal(|ui| {
                 for (key, title) in [
@@ -983,7 +1009,7 @@ impl AffectLabPanel {
                 }
             });
         } else if report["phase"] == "complete" {
-            ui.colored_label(egui::Color32::YELLOW, "No reliable two-sided lever passed the confirmation criteria. The derived vector remains experimental.");
+            ui.colored_label(super::theme::palette(ui).warning, "No reliable two-sided lever passed the confirmation criteria. The derived vector remains experimental.");
         }
         if let Some(reasons) = report["failure_reasons"].as_array() {
             for reason in reasons {
@@ -991,7 +1017,7 @@ impl AffectLabPanel {
             }
         }
         if let Some(error) = report["error"].as_str() {
-            ui.colored_label(egui::Color32::LIGHT_RED, error);
+            ui.colored_label(super::theme::palette(ui).error, error);
         }
         ui.collapsing("More / less effects vs neutral and placebo", |ui| {
             ui.small("Scores are 0–4 rubric judgments of observable output. Paired bootstrap intervals are exploratory and conditional on the chosen settings and this judge.");
@@ -1094,7 +1120,7 @@ impl AffectLabPanel {
             }
             output_gallery(ui, &report["records"], "response_study");
             if let Some(error) = report["error"].as_str() {
-                ui.colored_label(egui::Color32::LIGHT_RED, error);
+                ui.colored_label(super::theme::palette(ui).error, error);
             }
             if let Some(path) = report["path"].as_str() {
                 ui.small(format!("Raw study report: {path}"));
@@ -1514,7 +1540,8 @@ mod tests {
         for tab in 0..4 {
             p.tab = tab;
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                p.render(ctx, &client, &runtime)
+                egui::CentralPanel::default()
+                    .show(ctx, |ui| p.render_contents(ui, &client, &runtime));
             });
             assert!(!output.shapes.is_empty());
             // Empty text/placeholders have nonfinite sentinel bounds in epaint;

@@ -1,72 +1,50 @@
 # app.rs
 
 ## Purpose
-Defines `AgentApp`, the top-level eframe application for the API-only frontend. It owns UI state, an `ApiClient`, websocket-driven event intake, and REST-driven chat/config control.
 
-## Components
+`AgentApp` owns the native frontend's API client, event intake, backend status,
+chat history/media, live streams/tool output, continuity summaries, approvals,
+shared settings/identity draft and token trace state. `workbench.rs` renders its
+workspace shell; `theme.rs` applies the operator's appearance draft.
 
-### `AgentApp`
-- **Does**: Holds frontend UI state: event log, API client, runtime status, chat list/history, streaming preview, tool-progress drawer data, settings/character panels, deliberate Loose-mode arm confirmation/current durable goal, `pending_approvals` for approval popups, and mind-state fields: `last_orientation`, `last_action`, `last_journal`, `live_stream_text` (live LLM token stream, any conversation), plus the rolling `token_monitor` trace state.
-- **Interacts with**: `crate::api::{ApiClient, FrontendEvent, ChatConversation, ChatMessage, AgentVisualState, OrientationSummary}`, UI subpanels.
+## Runtime and data
 
-### `AgentApp::new(api_client, fallback_config)`
-- **Does**: Creates a tokio runtime, starts WS event streaming, fetches config plus plugin manifests from the backend (fallback on config failure), initializes panels, then loads status/conversations/history.
-- **Interacts with**: `ApiClient::stream_events_forever`, `ApiClient::get_config`, `ApiClient::list_plugins`.
+`new` starts websocket intake, fetches configuration/plugin manifests and loads
+status, conversations, history and schedules. REST refresh remains every two
+seconds for consistency. `update` processes events, advances the existing Affect
+Lab async controller, renders the workbench and dispatches ordinary API actions.
+No daemon, background desktop process, or model-loading ownership is added here.
 
-### REST refresh helpers (`refresh_status`, `refresh_conversations`, `refresh_chat_history`)
-- **Does**: Pulls current backend state into UI every refresh interval.
-- **Interacts with**: `/v1/agent/status`, `/v1/conversations`, `/v1/conversations/:id/messages`.
+Generation lifecycle/metric events feed independent retained traces rather than
+the event tape. Typing invokes configured clear-on-interaction behavior. State,
+orientation, intention, journal and action summaries come from actual backend
+events/status; model-reported material is labeled, not represented as experience.
 
-### Scheduled-job helpers (`refresh_scheduled_jobs`, `apply_scheduled_job_actions`)
-- **Does**: Loads current schedules and executes settings-tab schedule CRUD actions through backend APIs.
-- **Interacts with**: `/v1/scheduled-jobs` routes, `ui/settings.rs` `ScheduledJobAction` queue.
+## Actions and persistence
 
-### Chat actions (`send_chat_message`, `create_new_conversation`)
-- **Does**: Sends operator messages and creates new conversations via backend API.
-- **Interacts with**: `/v1/conversations/:id/messages`, `/v1/conversations`.
+Chat create/send/rename/delete, pause/resume, turn stop, exact prompt inspection
+and media rendering retain their existing API contracts. Prompt inspection uses
+the base-derived palette and explicit source labels instead of fixed rainbow
+section colors. Destructive chat actions retain confirmation dialogs.
 
-### Prompt inspection (`open_prompt_inspector_for_turn`)
-- **Does**: Fetches the exact stored turn prompt payload from backend and opens an egui window showing full context prompt text, optional per-turn system prompt, and source-highlight overlays for context sections.
-- **Interacts with**: `/v1/turns/:id/prompt`, `chat::render_private_chat` prompt-button return value.
+`persist_config` saves through the backend, replaces the saved baseline only on
+success and reloads avatars. Provider transitions block saves. Failures retain
+drafts, surface errors and drop queued schedule mutations (editors can retry).
+Provider-only sync preserves unrelated drafts. Identity does not regenerate a
+custom system prompt without the operator's explicit checkbox.
 
-### `persist_config(config)`
-- **Does**: Saves settings/character config via backend API, syncs local panel state from backend response (including schema-driven plugin settings), and forces avatar reload so mood-avatar changes apply immediately.
-- **Interacts with**: `/v1/config`.
+Approvals remain in persistent top chrome across navigation. They are removed
+only after successful API approval or explicit local dismissal. Loose arming
+still requires confirmation; the header offers one-click disarm.
 
-### `impl eframe::App for AgentApp` -- `update()`
-- **Does**: Main render loop. Processes WS events, updates status/chat on timer, renders chat + activity panels, and dispatches API actions for pause/stop/config/message operations. Chat rendering consumes host-neutral media metadata without reading plugin-specific settings.
-- **Interacts with**: `chat::render_private_chat`, `chat::render_event_log`, `sprite::render_agent_sprite`.
+## Tests and contracts
 
-## Contracts
+`main.rs` still uses `AgentApp::new(ApiClient, AgentConfig)`. UI subpanels expose
+`render_contents` for embedded workspaces; Settings owns the shared draft/baseline.
+The default app never constructs synthetic fixtures.
 
-| Dependent | Expects | Breaking changes |
-|-----------|---------|------------------|
-| `main.rs` | `AgentApp::new(ApiClient, AgentConfig)` constructor | Changing constructor signature |
-| `api.rs` | Stable method surface for config/chat/status/pause/event-stream | Renaming/removing client methods |
-| UI panel modules | `settings_panel.config` remains mutable for cross-panel synchronization | Changing panel state ownership |
-
-### Mind-state header (`visual_state_display`)
-- **Does**: Renders a rich status strip under the app title: visual-state emoji + color, orientation disposition chip, and last-action one-liner — all sourced from live WS events rather than polling.
-
-### `render_live_tool_entry` / `tool_badge_color`
-- **Does**: Formats each live tool-progress entry as a colored tool-name badge (shell=amber, files=blue, network=purple, memory=green, generation=orange, vision=pink) plus truncated monospace output, with long URLs/tokens force-wrapped against the current panel width.
-
-### Sidebar — three zones
-- **Does**: The right panel ("🧠 Mind") is divided into three zones: (1) mind-state group (orientation, last action, last journal), (2) "💭 Live Stream" collapsible section showing a rotating wireframe token monitor plus the last 600 chars of the active LLM token stream, (3) grouped turn-history log via `render_event_log`.
-
-### `truncate_str` / `last_n_chars`
-- **Does**: Local helpers for display truncation. `truncate_str` adds `…` at max_chars; `last_n_chars` returns the trailing N chars of a string.
-
-## Notes
-- The app is no longer wired to in-process `Agent`/`AgentDatabase`/`flume` backend channels.
-- WS event stream runs continuously with reconnect; polling refresh every 2s is retained for list/history/status consistency.
-- Activity panel is now visible by default so autonomous progress and wake/error telemetry are immediately visible without extra clicks.
-- Generation lifecycle events are consumed directly by `AgentApp` and not pushed into the activity log. Editing the human composer (and successful submission as a fallback) invokes the monitor's configured clear-on-interaction behavior.
-- Main chat surface now uses fixed vertical regions (chat history, live tool output, composer) to prevent tool/output panels from overlapping chat bubbles or pushing the composer off-screen.
-- Sidebar helper text, live tool previews, and approval reasons insert soft line breaks into long unbroken tokens so the Mind panel can stay narrow even when tools emit raw URLs.
-- UI-level API failures are surfaced in the activity log as `FrontendEvent::Error` entries.
-- Prompt inspector windows are opened on demand from agent message rows and support toggling system-prompt visibility plus translucent source highlights over prompt sections.
-- `FrontendEvent::ApprovalRequest` is NOT pushed to the activity log; it is deduplicated and stored in `pending_approvals`. Each pending approval renders as an `egui::Window` popup (centered, non-collapsible) with "✅ Allow this session" and "✖ Dismiss" buttons. Approval calls `ApiClient::approve_tool`; dismiss just removes the entry from `pending_approvals`.
-- Integration settings are discovered from plugin manifests and rendered through one generic schema-driven surface.
-- The top-level `Let Run Loose` control requires confirmation. Once armed it becomes a one-click `Stop Loose` control that persists disarm and cancels the active episode; the Mind panel shows the current goal, motive, status, episode count, and last outcome.
-- Audio autoplay is carried by each media item, so `AgentApp` does not inspect plugin IDs or plugin-specific configuration.
+`isolated_snapshot` and `render_snapshot` are compiled only for tests or the
+opt-in `ui-snapshot` feature. They use a loopback port-1 placeholder, no event
+stream, no backend polling, no model loading and visibly labeled synthetic data.
+Headless navigation/layout tests and the real eframe screenshot example use this
+factory without affecting live configuration. See [workbench](workbench.md).

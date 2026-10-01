@@ -1,41 +1,40 @@
 # token_monitor.rs
 
 ## Purpose
-Renders the live token-status monitor in the Mind sidebar. It turns streamed token novelty samples into a deterministic 3D random-walk trace inside a slowly rotating wireframe sphere.
 
-## Components
+Native novelty instrument in the persistent workbench rail. Each generation owns
+an independent deterministic center-origin walk driven by token text, lexical
+novelty and optional provider logprob/entropy. It is not a hidden-state embedding,
+emotion meter or evidence of subjective experience.
 
-### `TokenMonitorState`
-- **Does**: Stores the active conversation trace, current 3D position/direction, sample counter, latest novelty value, and local interaction state for zoom/orbit inertia plus autorotation cooldown timing.
-- **Interacts with**: `ui/app.rs` event handling for `FrontendEvent::TokenMetrics`.
+## State and inspection
 
-### `TokenMonitorState::ingest`
-- **Does**: Resets the trace when a new stream starts and appends new token samples to the rolling path state.
-- **Interacts with**: backend token metric batches decoded in `api.rs`.
+`generation_started`, `ingest_generation` and `generation_finished` track
+independent paths. Paths retain samples until operator interaction by default,
+or until manual Clear when selected. Time/recency fading never deletes samples.
+`latest_generation` tracks the most recently updated path even when streams
+interleave; the inspector can select any retained generation/sample instead.
 
-### `render(ui, state)`
-- **Does**: Draws the pure-black backdrop, pale-green wireframe sphere, center marker, and the colored token trail. While hovered, mouse-wheel scroll adjusts zoom, drag orbits the view, double-click resets the view, hover guides appear, and the nearest step shows a pointer tooltip. Autorotation pauses during interaction and resumes after a 5-second idle cooldown.
-- **Interacts with**: egui painter API and `TokenMonitorState`.
+`latest_readout` reports selected novelty, optional logprob/entropy, generation
+source and explicit provider-probability versus lexical-proxy provenance. Missing
+provider probabilities remain n/a, never fabricated.
 
-### Trace helpers (`push_sample`, `hashed_direction`, `rotate`, `project`)
-- **Does**: Convert novelty/logprob/entropy into 3D movement and screen-space projection.
-- **Interacts with**: internal `Vec3` math and egui drawing primitives.
+## Rendering
 
-### Hover helpers (`draw_hover_guides`, `draw_hover_marker`, tooltip hit selection)
-- **Does**: Render the faint hover-only guide overlay and surface the nearest trace point's token/metric details next to the cursor.
-- **Interacts with**: egui hover/drag response state and stored `TracePoint` metadata.
+All scope/wire/trail/marker colors derive from `theme::Palette`. A unit sphere
+fills its scope via camera-distance compensation; this changes only projection,
+not trace coordinates or metrics. Sphere comes before controls so it remains
+visible in compact windows.
 
-## Contracts
+Drag orbits, scroll zooms, double-click resets; hover shows token/metric details.
+The inspector highlights a retained sample without truncating the full trail.
+“Orbit while generating” rotates only while a nonempty live trace exists, with
+a five-second cooldown after manual interaction. Idle/finished traces stay still
+once manual inertia settles. Camera motion never adds samples.
 
-| Dependent | Expects | Breaking changes |
-|-----------|---------|------------------|
-| `app.rs` | Generation lifecycle methods, retention controls, summary counters, and `render` remain available | Renaming state/render entry points |
-| `api.rs` | `TokenMetricSample` continues to expose `text`, optional `logprob`/`entropy`, and `novelty` | Changing sample field names or semantics |
+## Verification
 
-## Notes
-- The walk is deterministic per token text + sample index, so similar replies create similar knot shapes.
-- A mild center pull keeps boring runs near the origin while still letting higher-novelty segments escape beyond the unit sphere.
-- The sphere is decorative but data-driven: color shifts from green toward red as the trail moves farther from the center.
-- Zoom, manual orbit offsets, and autorotation cooldown are local UI state on `TokenMonitorState`, so interaction changes the view without disturbing the underlying trace.
-- Every generation owns an independent center-origin path. Paths persist until the next successful human submission by default, or indefinitely in manual mode; the Clear button always works.
-- Rendering combines a four-minute time half-life with generation recency so older paths slowly desaturate while the newest path remains vivid. Fading never deletes retained data.
+Tests cover separate path origins, retention/clear, recency fading, interleaved
+latest readouts, manual sample inspection, unavailable probability labeling and
+live-only/disableable autorotation. API token samples retain `text`, `novelty`
+and optional `logprob`/`entropy`; generation event/render methods remain stable.

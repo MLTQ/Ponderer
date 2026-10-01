@@ -13,7 +13,29 @@ use crate::api::{
 };
 use crate::config::AgentConfig;
 
+#[path = "workbench.rs"]
+mod workbench;
+
 const MAX_LIVE_TOOL_PROGRESS_LINES: usize = 200;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Workspace {
+    Conversation,
+    Mind,
+    Identity,
+    AffectLab,
+    Settings,
+}
+
+impl Workspace {
+    const ALL: [(Self, &'static str); 5] = [
+        (Self::Conversation, "Conversation"),
+        (Self::Mind, "Mind / journal"),
+        (Self::Identity, "Identity"),
+        (Self::AffectLab, "Affect lab"),
+        (Self::Settings, "Settings"),
+    ];
+}
 
 pub struct AgentApp {
     events: Vec<FrontendEvent>,
@@ -35,7 +57,8 @@ pub struct AgentApp {
     streaming_chat_preview: Option<StreamingChatPreview>,
     prompt_inspector: Option<PromptInspectorWindow>,
     last_chat_refresh: std::time::Instant,
-    show_activity_panel: bool,
+    workspace: Workspace,
+    show_event_tape: bool,
     /// Tool approval requests waiting for the user's response (tool_name, reason).
     pending_approvals: Vec<(String, String)>,
     /// Latest orientation summary received from the backend.
@@ -63,6 +86,8 @@ pub struct AgentApp {
     rename_conversation: Option<(String, String)>,
     /// Full text to show in the Mind event detail pop-out window.
     event_detail_popup: Option<String>,
+    /// Only the opt-in snapshot harness constructs this isolated mode; no backend is launched.
+    ui_snapshot: bool,
 }
 
 struct StreamingChatPreview {
@@ -120,10 +145,32 @@ impl AgentApp {
             }
         };
 
+        let mut app = Self::from_startup(
+            api_client,
+            startup_config,
+            runtime,
+            event_rx,
+            plugin_manifests,
+        );
+
+        app.refresh_status();
+        app.refresh_conversations();
+        app.refresh_chat_history();
+        app.refresh_scheduled_jobs();
+        app
+    }
+
+    fn from_startup(
+        api_client: ApiClient,
+        startup_config: AgentConfig,
+        runtime: tokio::runtime::Runtime,
+        event_rx: Receiver<FrontendEvent>,
+        plugin_manifests: Vec<crate::api::PluginManifest>,
+    ) -> Self {
         let mut settings_panel = SettingsPanel::new(startup_config.clone());
         settings_panel.set_plugin_manifests(plugin_manifests);
 
-        let mut app = Self {
+        Self {
             events: Vec::new(),
             event_rx,
             api_client,
@@ -143,7 +190,8 @@ impl AgentApp {
             streaming_chat_preview: None,
             prompt_inspector: None,
             last_chat_refresh: std::time::Instant::now(),
-            show_activity_panel: true,
+            workspace: Workspace::Conversation,
+            show_event_tape: true,
             pending_approvals: Vec::new(),
             last_orientation: None,
             last_action: None,
@@ -158,17 +206,73 @@ impl AgentApp {
             confirm_delete_conversation_id: None,
             rename_conversation: None,
             event_detail_popup: None,
-        };
-
-        app.refresh_status();
-        app.refresh_conversations();
-        app.refresh_chat_history();
-        app.refresh_scheduled_jobs();
-        app
+            ui_snapshot: false,
+        }
     }
 
     fn push_ui_error(&mut self, message: impl Into<String>) {
         self.events.push(FrontendEvent::Error(message.into()));
+    }
+
+    #[cfg(any(test, feature = "ui-snapshot"))]
+    pub fn isolated_snapshot(config: AgentConfig, workspace: &str) -> Self {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (_, event_rx) = flume::unbounded();
+        let client = ApiClient::new_local("http://127.0.0.1:1".into(), None);
+        let mut app = Self::from_startup(client, config, runtime, event_rx, Vec::new());
+        app.ui_snapshot = true;
+        app.workspace = match workspace {
+            "mind" => Workspace::Mind,
+            "identity" => Workspace::Identity,
+            "lab" => Workspace::AffectLab,
+            "settings" | "appearance" => Workspace::Settings,
+            _ => Workspace::Conversation,
+        };
+        if workspace == "appearance" {
+            app.settings_panel.open_tab("core.appearance");
+        }
+        if workspace == "lab" {
+            app.affect_lab.load_snapshot_fixture();
+        }
+        app.chat_history = [
+            ("operator", "Keep the sphere visible. I want this to feel like a technical workbench."),
+            ("assistant", "The trace is beside the conversation. Intentions, journal entries and raw events stay inspectable. This is synthetic state for an isolated UI snapshot, not a live model response."),
+        ].into_iter().enumerate().map(|(index,(role,content))|ChatMessage {
+            id:format!("fixture-{index}"), conversation_id:DEFAULT_CHAT_CONVERSATION_ID.into(),
+            role:role.into(), content:content.into(), created_at:chrono::Utc::now(),
+            processed:true, turn_id:None,
+        }).collect();
+        app.last_journal = Some("Synthetic fixture: the expected steering effect was not established in held-out outputs.".into());
+        app.pending_approvals = vec![("fixture / local tool".into(), "Synthetic approval for checking visibility across every workspace. No tool or outreach will execute.".into())];
+        app.events = vec![FrontendEvent::Observation(
+            "Isolated native UI fixture / no backend or model launched.".into(),
+        )];
+        let text = "A deterministic token novelty trace is not a projection of hidden activations . The live scope keeps the source and samples visible .";
+        let samples: Vec<_> = text
+            .split_whitespace()
+            .enumerate()
+            .map(|(index, text)| crate::api::TokenMetricSample {
+                text: text.into(),
+                novelty: 0.25 + (index % 9) as f32 * 0.08,
+                logprob: None,
+                entropy: None,
+            })
+            .collect();
+        app.token_monitor
+            .ingest_generation("fixture-trace", "synthetic snapshot", None, &samples);
+        app.token_monitor.generation_finished(
+            "fixture-trace",
+            "synthetic snapshot",
+            None,
+            "complete",
+        );
+        app
+    }
+
+    #[cfg(any(test, feature = "ui-snapshot"))]
+    pub fn render_snapshot(&mut self, ctx: &egui::Context) {
+        super::theme::apply(ctx, &self.settings_panel.config.appearance);
+        self.render_workbench(ctx);
     }
 
     fn refresh_status(&mut self) {
@@ -480,6 +584,9 @@ impl AgentApp {
 
     fn persist_config(&mut self, config: AgentConfig) {
         if self.affect_lab.provider_change_pending() {
+            self.settings_panel.discard_queued_schedule_changes();
+            self.settings_panel.save_error =
+                Some("Wait for the model provider change to finish before saving settings.".into());
             self.push_ui_error(
                 "Wait for the model provider change to finish before saving settings.",
             );
@@ -497,7 +604,9 @@ impl AgentApp {
                 tracing::info!("Config saved through backend API");
             }
             Err(error) => {
+                self.settings_panel.discard_queued_schedule_changes();
                 tracing::error!("Failed to persist config via backend API: {}", error);
+                self.settings_panel.save_error = Some(format!("Save failed: {error}"));
                 self.push_ui_error(format!("Failed to save settings: {}", error));
             }
         }
@@ -562,6 +671,7 @@ fn conversation_display_label(conversation: &ChatConversation) -> String {
 
 impl eframe::App for AgentApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        super::theme::apply(ctx, &self.settings_panel.config.appearance);
         if !self.avatars_loaded {
             let config = self.settings_panel.config.clone();
             self.load_avatars(ctx, &config);
@@ -692,518 +802,14 @@ impl eframe::App for AgentApp {
             self.events.push(event);
         }
 
-        // --- Approval requests ---
-        // Rendered inside the activity panel (not as a floating egui::Window) so they appear
-        // reliably on all platforms. egui::Window::anchor is fragile on Linux/Wayland: the
-        // viewport rect may not be known on the first frame, causing the window to be placed
-        // off-screen and remembered there by ID, never recovering.
-        let mut approve_tool: Option<String> = None;
-        let mut dismiss_tool: Option<String> = None;
-
-        egui::SidePanel::right("activity_panel")
-            .resizable(true)
-            .default_width(340.0)
-            .show_animated(ctx, self.show_activity_panel, |ui| {
-                // Pending approvals at the very top — hard to miss.
-                for (tool_name, reason) in &self.pending_approvals {
-                    ui.group(|ui| {
-                        ui.set_min_width(ui.available_width());
-                        ui.colored_label(
-                            egui::Color32::from_rgb(255, 160, 50),
-                            format!("! Approval needed: {}", tool_name),
-                        );
-                        ui.add_space(2.0);
-                        let wrapped_reason = wrap_text_for_ui_width(reason, ui.available_width());
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(wrapped_reason).small()).wrap(),
-                        );
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(
-                                    egui::RichText::new("Allow this session")
-                                        .color(egui::Color32::from_rgb(80, 200, 100)),
-                                )
-                                .clicked()
-                            {
-                                approve_tool = Some(tool_name.clone());
-                            }
-                            if ui.button("Dismiss").clicked() {
-                                dismiss_tool = Some(tool_name.clone());
-                            }
-                        });
-                    });
-                    ui.add_space(4.0);
-                }
-
-                ui.heading("🧠 Mind");
-                ui.add_space(4.0);
-
-                // Zone 1: Current mind state snapshot.
-                ui.group(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    if let Some(ref o) = self.last_orientation {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(
-                                egui::RichText::new(format!("🧭 {}", o.disposition))
-                                    .color(egui::Color32::LIGHT_YELLOW)
-                                    .small()
-                                    .strong(),
-                            );
-                            if o.anomaly_count > 0 {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "· {} anomal{}",
-                                        o.anomaly_count,
-                                        if o.anomaly_count == 1 { "y" } else { "ies" }
-                                    ))
-                                    .weak()
-                                    .small(),
-                                );
-                            }
-                        });
-                    }
-                    if let Some(ref action) = self.last_action {
-                        let wrapped = wrap_text_for_ui_width(
-                            &format!("⚡ {}", truncate_str(action, 80)),
-                            ui.available_width(),
-                        );
-                        ui.label(
-                            egui::RichText::new(wrapped)
-                                .small()
-                                .color(egui::Color32::LIGHT_GREEN),
-                        );
-                    }
-                    if let Some(ref journal) = self.last_journal {
-                        let wrapped = wrap_text_for_ui_width(
-                            &format!("📓 {}", truncate_str(journal, 80)),
-                            ui.available_width(),
-                        );
-                        ui.label(egui::RichText::new(wrapped).small().weak().italics());
-                    }
-                    // Show current activity while working (e.g. "Requesting LLM...").
-                    // This makes it visible what the agent is waiting on when the GPU is idle.
-                    if let Some(ref activity) = self.current_activity.clone() {
-                        let wrapped = wrap_text_for_ui_width(
-                            &format!("⏳ {}", truncate_str(activity, 90)),
-                            ui.available_width(),
-                        );
-                        ui.label(
-                            egui::RichText::new(wrapped)
-                                .small()
-                                .color(egui::Color32::LIGHT_BLUE),
-                        );
-                    }
-                    if let Some(ref intention) = self.current_intention {
-                        ui.separator();
-                        let mode_label = if self.loose_mode {
-                            "🜁 Loose goal"
-                        } else {
-                            "🎯 Intention"
-                        };
-                        ui.label(egui::RichText::new(mode_label).small().strong().color(
-                            if self.loose_mode {
-                                egui::Color32::from_rgb(230, 155, 70)
-                            } else {
-                                egui::Color32::LIGHT_GRAY
-                            },
-                        ));
-                        ui.label(
-                            egui::RichText::new(wrap_text_for_ui_width(
-                                &intention.summary,
-                                ui.available_width(),
-                            ))
-                            .small(),
-                        )
-                        .on_hover_text(format!(
-                            "Why: {}\nStatus: {}\nEpisodes: {}{}",
-                            intention.motivation,
-                            intention.status,
-                            intention.attempt_count,
-                            intention
-                                .last_outcome
-                                .as_deref()
-                                .map(|value| format!("\nLast outcome: {value}"))
-                                .unwrap_or_default()
-                        ));
-                    }
-                    if self.last_orientation.is_none()
-                        && self.last_action.is_none()
-                        && self.last_journal.is_none()
-                        && self.current_activity.is_none()
-                    {
-                        ui.label(
-                            egui::RichText::new("Waiting for agent state...")
-                                .weak()
-                                .italics()
-                                .small(),
-                        );
-                    }
-                });
-
-                ui.add_space(4.0);
-
-                // Zone 2: Live LLM token stream.
-                egui::CollapsingHeader::new(egui::RichText::new("💭 Live Stream").small().strong())
-                    .id_salt("live_stream_header")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        super::token_monitor::render(ui, &mut self.token_monitor);
-                        ui.add_space(6.0);
-                        ui.horizontal_wrapped(|ui| {
-                            let intensity = self.token_monitor.last_novelty().clamp(0.0, 1.25);
-                            let descriptor = if intensity > 0.95 {
-                                "wild"
-                            } else if intensity > 0.65 {
-                                "exploring"
-                            } else if intensity > 0.35 {
-                                "steady"
-                            } else {
-                                "grounded"
-                            };
-                            ui.label(
-                                egui::RichText::new(format!("Trace: {}", descriptor))
-                                    .small()
-                                    .color(egui::Color32::from_rgb(170, 255, 190)),
-                            );
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "· {} steps",
-                                    self.token_monitor.trace_len()
-                                ))
-                                .small()
-                                .weak(),
-                            );
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "· {} paths",
-                                    self.token_monitor.path_count()
-                                ))
-                                .small()
-                                .weak(),
-                            );
-                        });
-                        ui.add_space(4.0);
-                        egui::ScrollArea::vertical()
-                            .max_height(110.0)
-                            .stick_to_bottom(true)
-                            .id_salt("live_stream_scroll")
-                            .show(ui, |ui| {
-                                if let Some(ref text) = self.live_stream_text {
-                                    let preview = last_n_chars(text, 600);
-                                    let wrapped =
-                                        wrap_text_for_ui_width(&preview, ui.available_width());
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(wrapped)
-                                                .small()
-                                                .color(egui::Color32::from_gray(200)),
-                                        )
-                                        .wrap(),
-                                    );
-                                } else {
-                                    ui.label(egui::RichText::new("—").weak().small().italics());
-                                }
-                            });
-                    });
-
-                ui.add_space(4.0);
-                ui.separator();
-                ui.add_space(4.0);
-
-                // Zone 3: Grouped turn history log.
-                super::chat::render_event_log(ui, &self.events, &mut self.event_detail_popup);
-            });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                super::sprite::render_agent_sprite(ui, &self.current_state, self.avatars.as_mut());
-                ui.vertical(|ui| {
-                    ui.heading("Ponderer");
-                    ui.horizontal_wrapped(|ui| {
-                        let (state_text, state_color) = visual_state_display(&self.current_state);
-                        ui.label(
-                            egui::RichText::new(state_text)
-                                .color(state_color)
-                                .small()
-                                .strong(),
-                        );
-                        // Show how long the agent has been in the current state.
-                        // This makes "stuck Thinking" immediately visible.
-                        if let Some(since) = self.visual_state_since {
-                            let elapsed = chrono::Utc::now()
-                                .signed_duration_since(since)
-                                .num_seconds()
-                                .max(0) as u64;
-                            if elapsed >= 3 {
-                                ui.label(
-                                    egui::RichText::new(format!("({})", format_elapsed(elapsed)))
-                                        .color(if elapsed > 30 {
-                                            egui::Color32::YELLOW
-                                        } else {
-                                            egui::Color32::GRAY
-                                        })
-                                        .small(),
-                                );
-                            }
-                        }
-                        if let Some(ref o) = self.last_orientation {
-                            ui.label(egui::RichText::new("|").weak().small());
-                            ui.label(
-                                egui::RichText::new(format!("🧭 {}", o.disposition))
-                                    .color(egui::Color32::LIGHT_YELLOW)
-                                    .small(),
-                            );
-                        }
-                        if let Some(ref action) = self.last_action {
-                            ui.label(egui::RichText::new("|").weak().small());
-                            ui.label(egui::RichText::new(truncate_str(action, 50)).weak().small());
-                        }
-                    });
-                });
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let pause_text = "⏸ Pause";
-                    if ui.button(pause_text).clicked() {
-                        match self.runtime.block_on(self.api_client.toggle_pause()) {
-                            Ok(paused) => {
-                                self.current_state = if paused {
-                                    AgentVisualState::Paused
-                                } else {
-                                    AgentVisualState::Idle
-                                };
-                            }
-                            Err(error) => {
-                                tracing::error!("Failed to toggle pause: {}", error);
-                                self.push_ui_error(format!("Failed to toggle pause: {}", error));
-                            }
-                        }
-                    }
-
-                    if ui.button("⏹ Stop Turn").clicked() {
-                        match self.runtime.block_on(self.api_client.stop_agent_turn()) {
-                            Ok(_) => {
-                                let active = self.active_conversation_id.clone();
-                                self.streaming_chat_preview = None;
-                                self.clear_live_tool_progress(&active);
-                                self.refresh_conversations();
-                                self.refresh_chat_history();
-                                self.current_state = AgentVisualState::Idle;
-                            }
-                            Err(error) => {
-                                tracing::error!("Failed to stop active turn: {}", error);
-                                self.push_ui_error(format!(
-                                    "Failed to stop active turn: {}",
-                                    error
-                                ));
-                            }
-                        }
-                    }
-
-                    if self.loose_mode {
-                        if ui
-                            .button(
-                                egui::RichText::new("⏹ Stop Loose")
-                                    .color(egui::Color32::from_rgb(255, 120, 90)),
-                            )
-                            .on_hover_text("Disarm Loose mode and cancel the active episode")
-                            .clicked()
-                        {
-                            match self.runtime.block_on(self.api_client.set_loose_mode(false)) {
-                                Ok(enabled) => {
-                                    self.loose_mode = enabled;
-                                    self.settings_panel.config.loose_mode = enabled;
-                                    self.current_state = AgentVisualState::Idle;
-                                }
-                                Err(error) => self
-                                    .push_ui_error(format!("Failed to stop Loose mode: {}", error)),
-                            }
-                        }
-                    } else if ui
-                        .button("▶ Let Run Loose")
-                        .on_hover_text("Arm self-directed autonomy on this machine")
-                        .clicked()
-                    {
-                        self.show_loose_arm_confirmation = true;
-                    }
-
-                    if ui.button("⚙ Settings").clicked() {
-                        self.settings_panel.open();
-                        self.refresh_scheduled_jobs();
-                    }
-
-                    if ui.button("Affect Lab").clicked() {
-                        self.affect_lab.show = true;
-                    }
-
-                    if ui.button("🎭 Character").clicked() {
-                        self.character_panel.show = true;
-                    }
-
-                    let activity_btn_text = if self.show_activity_panel {
-                        "📋 Hide Activity"
-                    } else {
-                        "📋 Show Activity"
-                    };
-                    if ui.button(activity_btn_text).clicked() {
-                        self.show_activity_panel = !self.show_activity_panel;
-                    }
-                });
-            });
-
-            ui.separator();
-
-            ui.horizontal(|ui| {
-                ui.label("Conversation:");
-                let previous_conversation_id = self.active_conversation_id.clone();
-                let selected_text = self
-                    .conversations
-                    .iter()
-                    .find(|c| c.id == self.active_conversation_id)
-                    .map(conversation_display_label)
-                    .unwrap_or_else(|| "Default chat".to_string());
-
-                egui::ComboBox::from_id_salt("chat_conversation_picker")
-                    .selected_text(selected_text)
-                    .show_ui(ui, |ui| {
-                        for conversation in &self.conversations {
-                            ui.selectable_value(
-                                &mut self.active_conversation_id,
-                                conversation.id.clone(),
-                                conversation_display_label(conversation),
-                            );
-                        }
-                    });
-
-                if ui.button("New Chat").clicked() {
-                    self.create_new_conversation();
-                }
-
-                if ui
-                    .button("Rename")
-                    .on_hover_text("Rename this conversation")
-                    .clicked()
-                {
-                    let current_title = self
-                        .conversations
-                        .iter()
-                        .find(|c| c.id == self.active_conversation_id)
-                        .map(|c| c.title.clone())
-                        .unwrap_or_default();
-                    self.rename_conversation =
-                        Some((self.active_conversation_id.clone(), current_title));
-                }
-
-                if ui
-                    .button(
-                        egui::RichText::new("Delete").color(egui::Color32::from_rgb(200, 80, 80)),
-                    )
-                    .on_hover_text("Delete this conversation")
-                    .clicked()
-                {
-                    self.confirm_delete_conversation_id = Some(self.active_conversation_id.clone());
-                }
-
-                if self.active_conversation_id != previous_conversation_id {
-                    self.streaming_chat_preview = None;
-                    self.refresh_chat_history();
-                }
-            });
-            ui.add_space(6.0);
-
-            let active_streaming_preview = self
-                .streaming_chat_preview
-                .as_ref()
-                .filter(|preview| preview.conversation_id == self.active_conversation_id)
-                .map(|preview| preview.content.clone());
-            let active_progress: Vec<LiveToolProgress> = self
-                .live_tool_progress
-                .iter()
-                .filter(|entry| entry.conversation_id == self.active_conversation_id)
-                .cloned()
-                .collect();
-            let composer_reserved = 112.0_f32;
-            let live_reserved = if active_progress.is_empty() {
-                0.0
-            } else {
-                220.0
-            };
-            let chat_height = (ui.available_height() - composer_reserved - live_reserved).max(0.0);
-
-            let mut requested_prompt_turn_id: Option<String> = None;
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), chat_height),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    requested_prompt_turn_id = super::chat::render_private_chat(
-                        ui,
-                        &self.chat_history,
-                        active_streaming_preview.as_deref(),
-                        &mut self.chat_media_cache,
-                    );
-                },
-            );
-            if let Some(turn_id) = requested_prompt_turn_id {
-                self.open_prompt_inspector_for_turn(&turn_id);
-            }
-
-            if !active_progress.is_empty() {
-                ui.add_space(6.0);
-                egui::CollapsingHeader::new(egui::RichText::new("⚡ Live Agent Turn").strong())
-                    .id_salt("live_agent_turn")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .max_height(170.0)
-                            .stick_to_bottom(true)
-                            .id_salt("live_turn_scroll")
-                            .show(ui, |ui| {
-                                for entry in &active_progress {
-                                    render_live_tool_entry(ui, entry);
-                                }
-                            });
-                    });
-            }
-
-            ui.add_space(6.0);
-            ui.separator();
-            ui.label(
-                egui::RichText::new("Press Enter to send. Shift+Enter inserts a newline.")
-                    .small()
-                    .weak(),
-            );
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("💬");
-                let response = ui.add_sized(
-                    [ui.available_width() - 80.0, 68.0],
-                    egui::TextEdit::multiline(&mut self.user_input)
-                        .hint_text("Message Ponderer...")
-                        .desired_rows(3),
-                );
-                if response.changed() {
-                    self.token_monitor.on_human_interaction();
-                }
-
-                let send_shortcut = response.has_focus()
-                    && ui.input(|i| {
-                        i.key_pressed(egui::Key::Enter)
-                            && !i.modifiers.shift
-                            && !i.modifiers.ctrl
-                            && !i.modifiers.command
-                            && !i.modifiers.alt
-                    });
-                let send_clicked = ui.button("Send").clicked();
-
-                if (send_shortcut || send_clicked) && !self.user_input.trim().is_empty() {
-                    let msg = self.user_input.trim().to_string();
-                    self.streaming_chat_preview = None;
-                    self.send_chat_message(&msg);
-                    self.user_input.clear();
-                }
-            });
-            ui.add_space(8.0);
-        });
+        if let Some(config) =
+            self.affect_lab
+                .tick(&self.api_client, &self.runtime, self.settings_panel.show)
+        {
+            self.settings_panel.sync_provider_from_config(&config);
+            self.character_panel.config = self.settings_panel.config.clone();
+        }
+        let (approve_tool, dismiss_tool) = self.render_workbench(ctx);
 
         if self.show_loose_arm_confirmation {
             let mut arm = false;
@@ -1228,7 +834,7 @@ impl eframe::App for AgentApp {
                         if ui
                             .button(
                                 egui::RichText::new("Arm and begin")
-                                    .color(egui::Color32::from_rgb(230, 155, 70))
+                                    .color(super::theme::palette(ui).warning)
                                     .strong(),
                             )
                             .clicked()
@@ -1244,7 +850,7 @@ impl eframe::App for AgentApp {
                 match self.runtime.block_on(self.api_client.set_loose_mode(true)) {
                     Ok(enabled) => {
                         self.loose_mode = enabled;
-                        self.settings_panel.config.loose_mode = enabled;
+                        self.settings_panel.sync_loose_action(enabled);
                         self.settings_panel.config.enable_ambient_loop = true;
                         self.current_state = AgentVisualState::Idle;
                     }
@@ -1363,7 +969,7 @@ impl eframe::App for AgentApp {
                         if ui
                             .button(
                                 egui::RichText::new("Delete")
-                                    .color(egui::Color32::from_rgb(200, 80, 80)),
+                                    .color(super::theme::palette(ui).error),
                             )
                             .clicked()
                         {
@@ -1385,7 +991,7 @@ impl eframe::App for AgentApp {
             let mut open = inspector.open;
             egui::Window::new(format!(
                 "Turn Prompt · {}",
-                &inspector.turn_id.chars().take(12).collect::<String>()
+                inspector.turn_id.chars().take(12).collect::<String>()
             ))
             .open(&mut open)
             .resizable(true)
@@ -1398,7 +1004,7 @@ impl eframe::App for AgentApp {
                 );
                 ui.add_space(6.0);
                 if let Some(error) = inspector.error.as_deref() {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(super::theme::palette(ui).error, error);
                 } else if inspector.prompt_text.trim().is_empty() {
                     ui.label(
                         egui::RichText::new("No stored prompt text for this turn.")
@@ -1473,44 +1079,19 @@ impl eframe::App for AgentApp {
             }
         }
 
-        if let Some(config) =
-            self.affect_lab
-                .tick(&self.api_client, &self.runtime, self.settings_panel.show)
-        {
-            self.settings_panel.sync_provider_from_config(&config);
-            self.character_panel.config = config;
-        }
-
-        self.affect_lab.render(ctx, &self.api_client, &self.runtime);
-        if self.affect_lab.open_settings {
-            self.affect_lab.open_settings = false;
-            self.settings_panel.open_tab("core.general");
-        }
-        if let Some(new_config) = self.settings_panel.render(
-            ctx,
-            !self.affect_lab.provider_change_pending(),
-            |ui, config| {
-                self.affect_lab
-                    .render_connection(ui, config, &self.api_client, &self.runtime);
-            },
-        ) {
-            self.persist_config(new_config);
-        }
         let scheduled_job_actions = self.settings_panel.take_scheduled_job_actions();
         if !scheduled_job_actions.is_empty() {
             self.apply_scheduled_job_actions(scheduled_job_actions);
         }
 
-        if let Some(new_config) = self.character_panel.render(ctx) {
-            self.persist_config(new_config);
-        }
-
         if let Some(ref tool) = approve_tool {
             match self.runtime.block_on(self.api_client.approve_tool(tool)) {
-                Ok(()) => tracing::info!("Session approval granted for: {}", tool),
+                Ok(()) => {
+                    tracing::info!("Session approval granted for: {}", tool);
+                    self.pending_approvals.retain(|(t, _)| t != tool);
+                }
                 Err(e) => self.push_ui_error(format!("Failed to approve tool: {}", e)),
             }
-            self.pending_approvals.retain(|(t, _)| t != tool);
         }
         if let Some(ref tool) = dismiss_tool {
             self.pending_approvals.retain(|(t, _)| t != tool);
@@ -1520,20 +1101,8 @@ impl eframe::App for AgentApp {
     }
 }
 
-fn visual_state_display(state: &AgentVisualState) -> (&'static str, egui::Color32) {
-    match state {
-        AgentVisualState::Idle => ("💤 Idle", egui::Color32::from_gray(150)),
-        AgentVisualState::Reading => ("👁 Reading", egui::Color32::from_rgb(200, 200, 100)),
-        AgentVisualState::Thinking => ("🤔 Thinking", egui::Color32::LIGHT_BLUE),
-        AgentVisualState::Writing => ("✍ Writing", egui::Color32::LIGHT_GREEN),
-        AgentVisualState::Happy => ("😊 Happy", egui::Color32::from_rgb(100, 255, 150)),
-        AgentVisualState::Confused => ("😕 Confused", egui::Color32::from_rgb(255, 150, 100)),
-        AgentVisualState::Paused => ("⏸ Paused", egui::Color32::GRAY),
-    }
-}
-
 fn render_live_tool_entry(ui: &mut egui::Ui, entry: &LiveToolProgress) {
-    let color = tool_badge_color(&entry.tool_name);
+    let color = super::theme::palette(ui).accent;
     ui.horizontal_wrapped(|ui| {
         ui.label(
             egui::RichText::new(&entry.tool_name)
@@ -1554,34 +1123,12 @@ fn render_live_tool_entry(ui: &mut egui::Ui, entry: &LiveToolProgress) {
             egui::Label::new(
                 egui::RichText::new(wrapped_output)
                     .small()
-                    .color(egui::Color32::from_gray(200)),
+                    .color(super::theme::palette(ui).muted),
             )
             .wrap(),
         );
     });
     ui.add_space(2.0);
-}
-
-fn tool_badge_color(tool_name: &str) -> egui::Color32 {
-    let name = tool_name.to_ascii_lowercase();
-    if name.starts_with("shell") || name.contains("run_command") || name.contains("bash") {
-        egui::Color32::from_rgb(255, 200, 60)
-    } else if name.contains("file") || name.starts_with("read") || name.starts_with("write") {
-        egui::Color32::from_rgb(100, 160, 255)
-    } else if name.starts_with("http") || name.starts_with("web") || name.starts_with("fetch") {
-        egui::Color32::from_rgb(200, 100, 255)
-    } else if name.starts_with("memory")
-        || name.starts_with("recall")
-        || name.starts_with("remember")
-    {
-        egui::Color32::from_rgb(80, 220, 130)
-    } else if name.contains("generate") || name.contains("image") {
-        egui::Color32::from_rgb(255, 140, 70)
-    } else if name.starts_with("vision") || name.contains("camera") || name.contains("screen") {
-        egui::Color32::from_rgb(255, 100, 150)
-    } else {
-        egui::Color32::from_rgb(180, 180, 180)
-    }
 }
 
 /// Format elapsed seconds as a compact human-readable duration (e.g. "4m 23s", "1h 2m").
@@ -1660,7 +1207,6 @@ fn parse_subtask_id(output: &str) -> Option<String> {
 struct PromptSection {
     title: String,
     source: &'static str,
-    color: egui::Color32,
     body: String,
 }
 
@@ -1679,9 +1225,10 @@ fn render_highlighted_prompt_sections(ui: &mut egui::Ui, prompt: &str) {
     }
 
     for section in sections {
+        let colors = super::theme::palette(ui);
         let frame = egui::Frame::group(ui.style())
-            .fill(section.color.gamma_multiply(0.15))
-            .stroke(egui::Stroke::new(1.0, section.color.gamma_multiply(0.65)));
+            .fill(colors.soft)
+            .stroke(egui::Stroke::new(1.0_f32, colors.border));
         frame.show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(&section.title).strong());
@@ -1689,7 +1236,7 @@ fn render_highlighted_prompt_sections(ui: &mut egui::Ui, prompt: &str) {
                 ui.label(
                     egui::RichText::new(format!("source: {}", section.source))
                         .small()
-                        .color(section.color),
+                        .color(colors.accent),
                 );
             });
             ui.add_space(3.0);
@@ -1722,22 +1269,20 @@ fn split_prompt_sections(prompt: &str) -> Vec<PromptSection> {
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .unwrap_or("Context");
-        let (source, color) = classify_prompt_section(title, trimmed);
+        let source = classify_prompt_section(title, trimmed);
         sections.push(PromptSection {
             title: title.to_string(),
             source,
-            color,
             body: trimmed.to_string(),
         });
     }
 
     if sections.is_empty() && !normalized.trim().is_empty() {
         let trimmed = normalized.trim();
-        let (source, color) = classify_prompt_section("Prompt", trimmed);
+        let source = classify_prompt_section("Prompt", trimmed);
         sections.push(PromptSection {
             title: "Prompt".to_string(),
             source,
-            color,
             body: trimmed.to_string(),
         });
     }
@@ -1745,58 +1290,39 @@ fn split_prompt_sections(prompt: &str) -> Vec<PromptSection> {
     sections
 }
 
-fn classify_prompt_section(title: &str, body: &str) -> (&'static str, egui::Color32) {
+fn classify_prompt_section(title: &str, body: &str) -> &'static str {
     let title_l = title.to_ascii_lowercase();
     let body_l = body.to_ascii_lowercase();
-    let pick = |source: &'static str, color: egui::Color32| (source, color);
 
     if title_l.contains("concern priority context") || body_l.contains("concern priority context") {
-        return pick(
-            "Concerns manager (DB)",
-            egui::Color32::from_rgb(230, 179, 90),
-        );
+        return "Concerns manager (DB)";
     }
     if title_l.contains("working memory") || body_l.contains("working memory") {
-        return pick(
-            "Working memory (DB)",
-            egui::Color32::from_rgb(130, 180, 255),
-        );
+        return "Working memory (DB)";
     }
     if title_l.contains("recent conversation context") || body_l.contains("recent private chat") {
-        return pick(
-            "Recent chat history",
-            egui::Color32::from_rgb(120, 210, 170),
-        );
+        return "Recent chat history";
     }
     if title_l.contains("conversation summary snapshot") {
-        return pick("Compaction summary", egui::Color32::from_rgb(180, 160, 240));
+        return "Compaction summary";
     }
     if title_l.contains("recent action digest") {
-        return pick(
-            "Action digest (chat turns)",
-            egui::Color32::from_rgb(255, 150, 120),
-        );
+        return "Action digest (chat turns)";
     }
     if title_l.contains("previous ooda packet") {
-        return pick(
-            "Previous OODA packet",
-            egui::Color32::from_rgb(255, 200, 120),
-        );
+        return "Previous OODA packet";
     }
     if title_l.contains("ooda context") {
-        return pick(
-            "Orientation + decision context",
-            egui::Color32::from_rgb(140, 235, 140),
-        );
+        return "Orientation + decision context";
     }
     if title_l.contains("new operator message") {
-        return pick("Operator input", egui::Color32::from_rgb(120, 200, 255));
+        return "Operator input";
     }
     if title_l.contains("autonomous continuation context") {
-        return pick("Continuation hint", egui::Color32::from_rgb(220, 220, 120));
+        return "Continuation hint";
     }
 
-    pick("Additional context", egui::Color32::from_gray(170))
+    "Additional context"
 }
 
 #[cfg(test)]

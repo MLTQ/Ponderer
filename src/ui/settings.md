@@ -1,7 +1,7 @@
 # settings.rs
 
 ## Purpose
-Implements the tabbed Settings window for the desktop UI. It keeps core agent settings in fixed tabs and appends schema-driven settings tabs from discovered plugin manifests.
+Implements the embedded Settings workspace for the native desktop UI. It keeps core agent settings in fixed tabs and appends schema-driven settings tabs from discovered plugin manifests.
 
 ## Components
 
@@ -17,9 +17,8 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 - **Does**: Replaces local config state from a saved backend config.
 - **Interacts with**: `ui/app.rs` after config persistence.
 
-### `SettingsPanel::open` / `SettingsPanel::open_tab`
-- **Does**: Opens the settings window, optionally selecting a discovered plugin tab.
-- **Interacts with**: `ui/app.rs` toolbar actions.
+### `SettingsPanel::open_tab`
+- **Does**: Selects a valid core or discovered plugin tab. Workspace navigation is owned by `workbench.rs`.
 
 ### Scheduled-job state methods (`set_scheduled_jobs`, `set_scheduled_jobs_error`, `take_scheduled_job_actions`)
 - **Does**: Synchronizes backend schedule snapshots/errors into the UI and emits queued save-time CRUD actions back to `app.rs`.
@@ -29,16 +28,16 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 - **Does**: Collects all staged schedule creates, edits, and deletions, validates them, and enqueues the corresponding `Create` / `Update` / `Delete` actions so the global `Save & Apply` button is the single commit point for the schedules tab.
 - **Interacts with**: `render`, scheduled-job editor/draft state, and `app.rs` schedule action dispatcher.
 
-### `SettingsPanel::render(ctx, save_allowed, model_controls) -> Option<AgentConfig>`
-- **Does**: Draws the tabbed settings window and returns `Some(config)` when the user clicks `Save & Apply`. Before returning, it now flushes all staged schedule creates/edits/deletes into the action queue so the settings window has one shared save contract.
+### `SettingsPanel::render_contents(ui, save_allowed, model_controls) -> Option<AgentConfig>`
+- **Does**: Draws the embedded workspace and returns `Some(config)` on `Save & apply`. Validated schedule changes queue at the same save point. Revert restores the saved configuration and clears schedule drafts. Failed config saves discard queued schedule mutations without losing editors.
 - **Interacts with**: `ui/app.rs` for persistence through the backend API.
-- **Model controls**: General delegates model connection editing to the shared
+- **Model controls**: Models delegates model connection editing to the shared
   Affect Lab controller. An API/local-GGUF dropdown switches editors; loading and
   provider selection are explicit session actions. API keys are masked. The
   app merges only provider fields after a switch, preserving other settings drafts.
 
 ### Core tab renderers
-- **Does**: Render grouped core settings tabs: `General`, `Behavior`, `Living Loop`, `Memory`, `System`, and `Schedules`. Living Loop includes Loose-mode arming, episode breath, consecutive-episode, and cooldown controls.
+- **Does**: Render Models, Appearance, Connections, Autonomy & contact, Data & memory, Turn budgets, System prompt, and Schedules. Identity/principles/boundaries live in Identity. Loose arming requires the main Permissions confirmation; this tab cannot bypass it.
 - **Interacts with**: top-level `AgentConfig` fields.
 - **Notes**: Behavior tab focuses on autonomous loop limits and loop-heat controls. It explicitly explains that disabling configurable chat limits leaves host emergency ceilings in place.
 
@@ -54,12 +53,14 @@ Implements the tabbed Settings window for the desktop UI. It keeps core agent se
 
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
-| `app.rs` | `config` remains `pub`; `render(ctx, save_allowed, model_controls)` returns `Option<AgentConfig>`; provider-only sync preserves drafts; `open_tab()` selects a valid tab ID | Changing these signatures or overwriting unrelated drafts |
+| `app.rs` / `workbench.rs` | Shared mutable config draft; `render_contents` returns `Option<AgentConfig>`; provider-only sync preserves drafts; `open_tab()` selects valid tab IDs | Changing these signatures or overwriting unrelated drafts |
 | `api.rs` | `PluginManifest.settings_tab` contains `id`, `title`, `order` when a plugin wants a settings tab | Renaming/removing settings-tab fields |
 | `api.rs` / plugin manifests | Generic plugin tabs require `settings_schema` to be present | Removing schema handling or changing field semantics |
 | Plugin packages | Settings UI remains entirely manifest/schema driven | Adding a new hard-coded integration tab |
 
 ## Notes
+- Appearance has a native sRGB picker, hex readout, presets and dark/light toggle. `theme.rs` derives surfaces, text and instrument colors; changes preview before persistence.
+- `saved_config`, `has_unsaved_changes`, `sync_from_config`, and `revert_drafts` distinguish live preview from successful backend persistence. Provider-only sync updates the provider baseline without erasing unsaved identity/appearance fields.
 - Plugin tabs come only from backend manifests; there are no integration-specific fallback tabs.
 - Unknown plugin settings tabs no longer require native frontend code as long as the backend provides a supported schema.
 - The global `Save & Apply` path returns schema-updated `AgentConfig` without integration-specific synchronization hooks.

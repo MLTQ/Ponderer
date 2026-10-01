@@ -1,16 +1,13 @@
 # sprite.rs
 
 ## Purpose
-Renders the header agent visual indicator (avatar when available, emoji fallback otherwise) using frontend runtime state from API events/status.
+Renders a compact 36px header avatar when available, or a palette-derived technical `P_` mark. Actual execution state is displayed separately in the workbench header.
 
 ## Components
 
 ### `render_agent_sprite(ui, state, avatars)`
-- **Does**: Renders animated avatar frames for the current `AgentVisualState` or falls back to emoji.
+- **Does**: Renders animated avatar frames for the current `AgentVisualState` or falls back to the mark.
 - **Interacts with**: `AvatarSet::get_for_state`, `crate::api::AgentVisualState`.
-
-### `render_agent_emoji(ui, state)`
-- **Does**: Maps each visual state to a color-coded emoji.
 
 ## Contracts
 

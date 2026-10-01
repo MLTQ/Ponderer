@@ -1,6 +1,7 @@
 use eframe::egui::{self, Align2, Color32, FontId, Id, Pos2, Rect, Rgba, Stroke, Vec2};
 use std::time::Instant;
 
+use super::theme::{self, Palette};
 use crate::api::TokenMetricSample;
 
 const TRACE_LIMIT: usize = 320;
@@ -23,6 +24,18 @@ pub struct TokenMonitorState {
     auto_pitch_phase: f32,
     last_frame_time: Option<f64>,
     auto_rotate_resume_at: f64,
+    latest_generation: Option<String>,
+    orbit_while_generating: bool,
+    inspect_generation: Option<String>,
+    inspect_index: usize,
+}
+
+pub struct TokenReadout<'a> {
+    pub novelty: f32,
+    pub logprob: Option<f32>,
+    pub entropy: Option<f32>,
+    pub metric_source: &'static str,
+    pub source: &'a str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +104,10 @@ impl TokenMonitorState {
             auto_pitch_phase: 0.0,
             last_frame_time: None,
             auto_rotate_resume_at: 0.0,
+            latest_generation: None,
+            orbit_while_generating: true,
+            inspect_generation: None,
+            inspect_index: 0,
         }
     }
 
@@ -128,6 +145,9 @@ impl TokenMonitorState {
             path.push_sample(sample);
             self.last_novelty = sample.novelty.clamp(0.0, 1.35);
         }
+        if !samples.is_empty() {
+            self.latest_generation = Some(generation_id.to_string());
+        }
     }
 
     pub fn generation_finished(
@@ -157,6 +177,8 @@ impl TokenMonitorState {
     pub fn clear(&mut self) {
         self.paths.clear();
         self.last_novelty = 0.0;
+        self.latest_generation = None;
+        self.inspect_generation = None;
     }
 
     pub fn retention_mode(&self) -> RetentionMode {
@@ -177,6 +199,39 @@ impl TokenMonitorState {
 
     pub fn path_count(&self) -> usize {
         self.paths.len()
+    }
+
+    fn readout_point(&self) -> Option<(&TracePath, &TracePoint)> {
+        if let Some(generation) = &self.inspect_generation {
+            let path = self
+                .paths
+                .iter()
+                .find(|path| &path.generation_id == generation)?;
+            let index = self.inspect_index.min(path.trace.len().saturating_sub(1));
+            return path.trace.get(index).map(|point| (path, point));
+        }
+        let generation = self.latest_generation.as_ref()?;
+        let path = self
+            .paths
+            .iter()
+            .find(|path| &path.generation_id == generation)?;
+        path.trace.last().map(|point| (path, point))
+    }
+
+    pub fn latest_readout(&self) -> Option<TokenReadout<'_>> {
+        let (path, point) = self.readout_point()?;
+        Some(TokenReadout {
+            novelty: point.novelty,
+            logprob: point.logprob,
+            entropy: point.entropy,
+            metric_source: match (point.logprob.is_some(), point.entropy.is_some()) {
+                (true, true) => "provider logprob + entropy / lexical novelty",
+                (true, false) => "provider logprob / lexical novelty",
+                (false, true) => "lexical proxy + provider entropy",
+                (false, false) => "lexical proxy / no provider probabilities",
+            },
+            source: &path.source,
+        })
     }
 
     fn reset_view(&mut self) {
@@ -297,17 +352,7 @@ impl std::ops::Mul<f32> for Vec3 {
 }
 
 pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new("Retain paths:").small().weak());
-        let mut mode = state.retention_mode();
-        ui.selectable_value(&mut mode, RetentionMode::UntilHumanMessage, "until I type");
-        ui.selectable_value(&mut mode, RetentionMode::Manual, "manual");
-        state.set_retention_mode(mode);
-        if ui.small_button("Clear").clicked() {
-            state.clear();
-        }
-    });
-    ui.add_space(3.0);
+    let colors = theme::palette(ui);
     let desired_size = egui::vec2(ui.available_width().max(180.0), 220.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
@@ -319,7 +364,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
         .unwrap_or(1.0 / 60.0);
     state.last_frame_time = Some(time);
 
-    painter.rect_filled(rect, 10.0, Color32::BLACK);
+    painter.rect_filled(rect, 1.0, colors.scope);
     if response.double_clicked() {
         state.reset_view();
     }
@@ -355,7 +400,11 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
     }
     state.zoom += (state.target_zoom - state.zoom) * 0.18;
 
-    if time >= state.auto_rotate_resume_at {
+    let live_trace = state
+        .paths
+        .iter()
+        .any(|path| !path.finished && !path.trace.is_empty());
+    if state.orbit_while_generating && live_trace && time >= state.auto_rotate_resume_at {
         state.auto_yaw += delta_time * 0.22;
         state.auto_pitch_phase += delta_time * 0.31;
     }
@@ -364,11 +413,11 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
     let sphere_radius = rect.width().min(rect.height()) * 0.34 * state.zoom;
     let center = rect.center();
 
-    draw_wireframe_sphere(&painter, rect, center, sphere_radius, yaw, pitch);
+    draw_wireframe_sphere(&painter, rect, center, sphere_radius, yaw, pitch, colors);
     if hovered {
-        draw_hover_guides(&painter, rect, center, sphere_radius, yaw, pitch);
+        draw_hover_guides(&painter, rect, center, sphere_radius, yaw, pitch, colors);
     }
-    draw_origin(&painter, center);
+    draw_origin(&painter, center, colors);
     let hover_hit = draw_trace(
         &painter,
         rect,
@@ -378,9 +427,10 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
         pitch,
         state,
         response.hover_pos(),
+        colors,
     );
     if let Some(hit) = hover_hit {
-        draw_hover_marker(&painter, hit.screen_pos);
+        draw_hover_marker(&painter, hit.screen_pos, colors);
         egui::show_tooltip_at_pointer(
             ui.ctx(),
             ui.layer_id(),
@@ -412,21 +462,91 @@ pub fn render(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
             },
         );
     }
+    if state.inspect_generation.is_some() {
+        if let Some((_, point)) = state.readout_point() {
+            if let Some(position) = project(
+                rect,
+                center,
+                sphere_radius,
+                rotate(point.position, yaw, pitch),
+            ) {
+                draw_hover_marker(&painter, position, colors);
+            }
+        }
+    }
 
     if response.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
-    ui.ctx().request_repaint();
+    if live_trace
+        || response.dragged()
+        || state.rotation_velocity.length_sq() > 0.000_002
+        || (state.zoom - state.target_zoom).abs() > 0.001
+    {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
+    }
+    render_trace_controls(ui, state);
 }
 
-fn draw_origin(painter: &egui::Painter, center: Pos2) {
-    painter.circle_filled(center, 2.0, Color32::from_rgb(128, 255, 170));
+fn render_trace_controls(ui: &mut egui::Ui, state: &mut TokenMonitorState) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new("Retain paths:").small().weak());
+        let mut mode = state.retention_mode();
+        ui.selectable_value(&mut mode, RetentionMode::UntilHumanMessage, "until I type");
+        ui.selectable_value(&mut mode, RetentionMode::Manual, "manual");
+        state.set_retention_mode(mode);
+        if ui.small_button("Clear").clicked() {
+            state.clear();
+        }
+    });
+    ui.checkbox(&mut state.orbit_while_generating, "Orbit while generating");
+    egui::CollapsingHeader::new("Inspect retained trace").show(ui, |ui| {
+        egui::ComboBox::from_id_salt("inspect_generation")
+            .selected_text(
+                state
+                    .inspect_generation
+                    .as_deref()
+                    .map(short_id)
+                    .unwrap_or("Live / latest"),
+            )
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut state.inspect_generation, None, "Live / latest");
+                for path in &state.paths {
+                    if !path.trace.is_empty() {
+                        ui.selectable_value(
+                            &mut state.inspect_generation,
+                            Some(path.generation_id.clone()),
+                            format!("{} / {}", short_id(&path.generation_id), path.source),
+                        );
+                    }
+                }
+            });
+        if let Some(id) = &state.inspect_generation {
+            if let Some(path) = state.paths.iter().find(|path| &path.generation_id == id) {
+                if !path.trace.is_empty() {
+                    ui.add(
+                        egui::Slider::new(&mut state.inspect_index, 0..=path.trace.len() - 1)
+                            .text("sample"),
+                    );
+                }
+            }
+        }
+        if let Some((_, point)) = state.readout_point() {
+            ui.monospace(format!("token / {}", render_token_label(&point.token)));
+        }
+    });
+    ui.add_space(3.0);
+}
+
+fn draw_origin(painter: &egui::Painter, center: Pos2, colors: Palette) {
+    painter.circle_filled(center, 2.0, colors.accent);
     painter.circle_stroke(
         center,
         5.5,
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(128, 255, 170, 40)),
+        Stroke::new(1.0_f32, colors.accent.gamma_multiply(0.2)),
     );
 }
 
@@ -437,8 +557,9 @@ fn draw_wireframe_sphere(
     radius: f32,
     yaw: f32,
     pitch: f32,
+    colors: Palette,
 ) {
-    let base_color = Rgba::from_rgba_unmultiplied(0.72, 1.0, 0.8, 0.42);
+    let base_color = colors.wire;
 
     for band in 0..SPHERE_LATITUDE_BANDS {
         let latitude = -0.82 + 1.64 * band as f32 / (SPHERE_LATITUDE_BANDS - 1) as f32;
@@ -486,6 +607,7 @@ fn draw_trace(
     pitch: f32,
     state: &TokenMonitorState,
     pointer_pos: Option<Pos2>,
+    colors: Palette,
 ) -> Option<HoverHit> {
     let mut nearest_hit: Option<(f32, HoverHit)> = None;
     let path_count = state.paths.len();
@@ -508,15 +630,15 @@ fn draw_trace(
             let distance = point.position.length();
             let normalized_radius = (distance / 1.4).clamp(0.0, 1.0);
             let color = blend_color(
-                Color32::from_rgb(110, 245, 150),
-                Color32::from_rgb(255, 90, 72),
+                colors.accent,
+                colors.trace_hot,
                 normalized_radius.max(point.novelty.min(1.0) * 0.5),
             );
             let alpha = ((0.35 + 0.65 * age) * path_vibrancy).clamp(0.0, 1.0);
             let depth_boost = ((to.z + 1.5) / 3.0).clamp(0.5, 1.0);
             let stroke = Stroke::new(
                 (1.15 + 1.7 * point.emphasis) * (0.72 + 0.28 * path_vibrancy),
-                Color32::from(Rgba::from(color) * (alpha * depth_boost)),
+                color.gamma_multiply(alpha * depth_boost),
             );
             painter.line_segment([from_pos, to_pos], stroke);
 
@@ -547,12 +669,12 @@ fn draw_trace(
     nearest_hit.map(|(_, hit)| hit)
 }
 
-fn draw_hover_marker(painter: &egui::Painter, position: Pos2) {
-    painter.circle_filled(position, 3.0, Color32::from_rgb(255, 200, 120));
+fn draw_hover_marker(painter: &egui::Painter, position: Pos2, colors: Palette) {
+    painter.circle_filled(position, 3.0, colors.trace_hot);
     painter.circle_stroke(
         position,
         7.0,
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 210, 140, 90)),
+        Stroke::new(1.0_f32, colors.trace_hot.gamma_multiply(0.35)),
     );
 }
 
@@ -564,7 +686,7 @@ fn draw_projected_polyline(
     yaw: f32,
     pitch: f32,
     points: &[Vec3],
-    base_color: Rgba,
+    base_color: Color32,
     width: f32,
 ) {
     for segment in points.windows(2) {
@@ -578,7 +700,7 @@ fn draw_projected_polyline(
         };
 
         let depth = (((from.z + to.z) * 0.5) + 1.4) / 2.8;
-        let color = Color32::from(base_color * depth.clamp(0.12, 0.95));
+        let color = base_color.gamma_multiply(depth.clamp(0.12, 0.95));
         painter.line_segment([from_pos, to_pos], Stroke::new(width, color));
     }
 }
@@ -590,13 +712,18 @@ fn draw_hover_guides(
     radius: f32,
     yaw: f32,
     pitch: f32,
+    colors: Palette,
 ) {
-    let guide_color = Color32::from_rgba_unmultiplied(170, 255, 210, 36);
-    let axis_color = Color32::from_rgba_unmultiplied(170, 255, 210, 72);
-    let font = FontId::monospace(9.0);
+    let guide_color = colors.accent.gamma_multiply(0.16);
+    let axis_color = colors.accent.gamma_multiply(0.32);
+    let font = FontId::monospace(11.0);
 
     for guide_radius in [0.5_f32, 1.0_f32] {
-        painter.circle_stroke(center, radius * guide_radius, Stroke::new(1.0, guide_color));
+        painter.circle_stroke(
+            center,
+            radius * guide_radius,
+            Stroke::new(1.0_f32, guide_color),
+        );
     }
 
     for (axis, label) in [
@@ -608,7 +735,7 @@ fn draw_hover_guides(
         let Some(end_pos) = project(rect, center, radius, rotated) else {
             continue;
         };
-        painter.line_segment([center, end_pos], Stroke::new(1.0, axis_color));
+        painter.line_segment([center, end_pos], Stroke::new(1.0_f32, axis_color));
         painter.text(
             end_pos + Vec2::new(4.0, -2.0),
             Align2::LEFT_CENTER,
@@ -621,12 +748,12 @@ fn draw_hover_guides(
     let ruler_y = rect.bottom() - 16.0;
     let start = Pos2::new(center.x - radius, ruler_y);
     let end = Pos2::new(center.x + radius, ruler_y);
-    painter.line_segment([start, end], Stroke::new(1.0, guide_color));
+    painter.line_segment([start, end], Stroke::new(1.0_f32, guide_color));
     for (fraction, label) in [(0.5_f32, "0.5"), (1.0_f32, "1.0")] {
         let x = center.x + radius * fraction;
         painter.line_segment(
             [Pos2::new(x, ruler_y - 4.0), Pos2::new(x, ruler_y + 4.0)],
-            Stroke::new(1.0, axis_color),
+            Stroke::new(1.0_f32, axis_color),
         );
         painter.text(
             Pos2::new(x, ruler_y - 6.0),
@@ -661,7 +788,9 @@ fn project(rect: Rect, center: Pos2, radius: f32, point: Vec3) -> Option<Pos2> {
     if depth <= 0.1 {
         return None;
     }
-    let scale = radius / depth;
+    // Compensate for camera distance so a unit sphere fills the scope rather than
+    // appearing as a tiny ball. Trace coordinates/metrics are unchanged.
+    let scale = radius * 2.5 / depth;
     let projected = center + Vec2::new(point.x * scale, point.y * scale * 0.92);
     rect.expand(8.0).contains(projected).then_some(projected)
 }
@@ -758,5 +887,67 @@ mod tests {
     fn recent_paths_are_more_vibrant_than_old_paths() {
         assert!(path_vibrancy(0.0, 1.0) > path_vibrancy(1.0, 1.0));
         assert!(path_vibrancy(0.0, 1.0) > path_vibrancy(0.0, 300.0));
+    }
+
+    #[test]
+    fn readout_tracks_interleaved_generations_and_selected_samples() {
+        let mut state = TokenMonitorState::new();
+        state.ingest_generation("one", "operator_chat", None, &[sample("a", 0.2)]);
+        state.ingest_generation("two", "reflection", None, &[sample("b", 0.7)]);
+        let mut measured = sample("c", 0.9);
+        measured.logprob = Some(-2.0);
+        measured.entropy = Some(1.2);
+        state.ingest_generation("one", "operator_chat", None, &[measured]);
+        let latest = state.latest_readout().unwrap();
+        assert_eq!(latest.source, "operator_chat");
+        assert_eq!(latest.logprob, Some(-2.0));
+        assert_eq!(latest.entropy, Some(1.2));
+        assert!(latest.metric_source.starts_with("provider logprob"));
+
+        state.inspect_generation = Some("one".into());
+        state.inspect_index = 0;
+        assert_eq!(state.latest_readout().unwrap().novelty, 0.2);
+        assert_eq!(state.latest_readout().unwrap().logprob, None);
+        assert!(state
+            .latest_readout()
+            .unwrap()
+            .metric_source
+            .contains("no provider probabilities"));
+        state.inspect_index = usize::MAX;
+        assert_eq!(state.latest_readout().unwrap().novelty, 0.9);
+        state.clear();
+        assert!(state.latest_readout().is_none());
+        assert!(state.inspect_generation.is_none());
+    }
+
+    #[test]
+    fn idle_scope_is_still_and_orbit_requires_a_live_trace() {
+        let ctx = egui::Context::default();
+        let mut state = TokenMonitorState::new();
+        let frame = |state: &mut TokenMonitorState, time| {
+            let _ = ctx.run(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| render(ui, state));
+                },
+            );
+        };
+        frame(&mut state, 0.0);
+        frame(&mut state, 0.1);
+        assert_eq!(state.auto_yaw, 0.0);
+        state.ingest_generation("one", "operator_chat", None, &[sample("a", 0.2)]);
+        frame(&mut state, 0.2);
+        assert!(state.auto_yaw > 0.0);
+        state.generation_finished("one", "operator_chat", None, "complete");
+        let yaw = state.auto_yaw;
+        frame(&mut state, 0.3);
+        assert_eq!(state.auto_yaw, yaw);
+        state.ingest_generation("two", "reflection", None, &[sample("b", 0.7)]);
+        state.orbit_while_generating = false;
+        frame(&mut state, 0.4);
+        assert_eq!(state.auto_yaw, yaw);
     }
 }

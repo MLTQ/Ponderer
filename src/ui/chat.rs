@@ -320,7 +320,7 @@ fn render_single_event(
 ) {
     match event {
         FrontendEvent::Observation(text) => {
-            event_line(ui, text, Color32::LIGHT_BLUE, detail_popup);
+            event_line(ui, text, super::theme::palette(ui).accent, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::ReasoningTrace(steps) => {
@@ -335,7 +335,7 @@ fn render_single_event(
                         let header = truncate_for_ui(step, 80);
                         egui::CollapsingHeader::new(
                             RichText::new(format!("• {}", header))
-                                .color(Color32::GRAY)
+                                .color(super::theme::palette(ui).muted)
                                 .small(),
                         )
                         .id_salt((event_idx, step_idx))
@@ -343,7 +343,9 @@ fn render_single_event(
                         .show(ui, |ui| {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(step.as_str()).color(Color32::GRAY).small(),
+                                    RichText::new(step.as_str())
+                                        .color(super::theme::palette(ui).muted)
+                                        .small(),
                                 )
                                 .wrap(),
                             );
@@ -351,7 +353,7 @@ fn render_single_event(
                     } else {
                         ui.label(
                             RichText::new(format!("• {}", step))
-                                .color(Color32::GRAY)
+                                .color(super::theme::palette(ui).muted)
                                 .small(),
                         );
                     }
@@ -367,7 +369,7 @@ fn render_single_event(
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(format!("🛠 {}", tool_name))
-                        .color(Color32::KHAKI)
+                        .color(super::theme::palette(ui).accent)
                         .small()
                         .strong(),
                 );
@@ -398,7 +400,7 @@ fn render_single_event(
         }
         FrontendEvent::ActionTaken { action, result } => {
             let full = format!("✅ {}: {}", action, result);
-            event_line(ui, &full, Color32::GREEN, detail_popup);
+            event_line(ui, &full, super::theme::palette(ui).accent, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::OrientationUpdate(orientation) => {
@@ -406,12 +408,12 @@ fn render_single_event(
                 "🧭 {} · {} anomalies · {} salient",
                 orientation.disposition, orientation.anomaly_count, orientation.salience_count
             );
-            event_line(ui, &full, Color32::LIGHT_YELLOW, detail_popup);
+            event_line(ui, &full, super::theme::palette(ui).warning, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::JournalWritten(summary) => {
             let full = format!("📓 {}", summary);
-            event_line(ui, &full, Color32::LIGHT_GREEN, detail_popup);
+            event_line(ui, &full, super::theme::palette(ui).accent, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::ConcernCreated { id, summary } => {
@@ -420,7 +422,7 @@ fn render_single_event(
                 id.chars().take(8).collect::<String>(),
                 summary
             );
-            event_line(ui, &full, Color32::LIGHT_BLUE, detail_popup);
+            event_line(ui, &full, super::theme::palette(ui).accent, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::ConcernTouched { id, summary } => {
@@ -429,12 +431,12 @@ fn render_single_event(
                 id.chars().take(8).collect::<String>(),
                 summary
             );
-            event_line(ui, &full, Color32::LIGHT_YELLOW, detail_popup);
+            event_line(ui, &full, super::theme::palette(ui).warning, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::Error(e) => {
             let full = format!("❌ {}", e);
-            event_line(ui, &full, Color32::RED, detail_popup);
+            event_line(ui, &full, super::theme::palette(ui).error, detail_popup);
             ui.add_space(3.0);
         }
         FrontendEvent::StateChanged(_)
@@ -459,15 +461,6 @@ pub fn render_private_chat(
 ) -> Option<String> {
     let mut requested_prompt_turn_id: Option<String> = None;
     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-        ui.heading("Private Chat");
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new("Direct communication with your agent")
-                .weak()
-                .italics(),
-        );
-        ui.add_space(8.0);
-
         // Never force a minimum here: parent layout may already reserve space
         // for live-tool output + composer, and forcing a min height causes
         // overlap/pileups when agent tool activity expands.
@@ -476,7 +469,7 @@ pub fn render_private_chat(
             .stick_to_bottom(true)
             .max_height(chat_scroll_height)
             .show(ui, |ui| {
-                let has_live_preview = streaming_preview.map_or(false, |p| !p.trim().is_empty());
+                let has_live_preview = streaming_preview.is_some_and(|p| !p.trim().is_empty());
 
                 if messages.is_empty() && !has_live_preview {
                     ui.centered_and_justified(|ui| {
@@ -580,14 +573,14 @@ fn render_chat_message_bubble(
         let (role_label, role_color, bg_color) = if is_operator {
             (
                 "You",
-                Color32::from_rgb(100, 149, 237),
-                Color32::from_rgb(30, 40, 60),
+                super::theme::palette(ui).muted,
+                super::theme::palette(ui).panel,
             )
         } else {
             (
                 "Agent",
-                Color32::from_rgb(144, 238, 144),
-                Color32::from_rgb(30, 50, 40),
+                super::theme::palette(ui).accent,
+                super::theme::palette(ui).soft,
             )
         };
 
@@ -664,7 +657,11 @@ fn render_media_panel(
     media_cache: &mut ChatMediaCache,
 ) {
     media_cache.refresh_audio_state();
-    ui.label(RichText::new("Media").small().color(Color32::LIGHT_GREEN));
+    ui.label(
+        RichText::new("Media")
+            .small()
+            .color(super::theme::palette(ui).accent),
+    );
 
     for media in media_details {
         let kind = normalize_media_kind(&media.media_kind);
@@ -731,7 +728,7 @@ fn render_media_panel(
                 ui.label(
                     RichText::new(error)
                         .small()
-                        .color(Color32::from_rgb(220, 130, 130)),
+                        .color(super::theme::palette(ui).error),
                 );
             }
         });
@@ -787,7 +784,7 @@ fn render_tool_calls_panel(
                         ui.label(
                             RichText::new("Arguments")
                                 .small()
-                                .color(Color32::LIGHT_BLUE),
+                                .color(super::theme::palette(ui).accent),
                         );
                         ui.monospace(force_wrap_long_tokens(
                             detail.arguments_preview.trim(),
@@ -795,7 +792,11 @@ fn render_tool_calls_panel(
                         ));
                     }
                     if !detail.output_preview.trim().is_empty() {
-                        ui.label(RichText::new("Output").small().color(Color32::LIGHT_GREEN));
+                        ui.label(
+                            RichText::new("Output")
+                                .small()
+                                .color(super::theme::palette(ui).accent),
+                        );
                         ui.monospace(force_wrap_long_tokens(
                             detail.output_preview.trim(),
                             wrap_token_len,
@@ -816,12 +817,12 @@ fn render_streaming_preview_bubble(ui: &mut egui::Ui, preview: &str, max_bubble_
         ui.set_width(inner_width);
         ui.set_max_width(inner_width);
         let wrap_token_len = max_token_len_for_width(inner_width);
-        ui.visuals_mut().widgets.noninteractive.bg_fill = Color32::from_rgb(30, 50, 40);
+        ui.visuals_mut().widgets.noninteractive.bg_fill = super::theme::palette(ui).soft;
 
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("Agent")
-                    .color(Color32::from_rgb(144, 238, 144))
+                    .color(super::theme::palette(ui).accent)
                     .strong(),
             );
             ui.label(RichText::new("live").weak().small().italics());

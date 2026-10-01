@@ -7,6 +7,7 @@ pub struct CharacterPanel {
     pub show: bool,
     avatar_texture: Option<egui::TextureHandle>,
     import_error: Option<String>,
+    rebuild_prompt_on_save: bool,
 }
 
 fn render_mood_avatar_row(ui: &mut egui::Ui, label: &str, value: &mut Option<String>) {
@@ -47,30 +48,45 @@ impl CharacterPanel {
             show: false,
             avatar_texture: None,
             import_error: None,
+            rebuild_prompt_on_save: false,
         }
     }
 
-    pub fn render(&mut self, ctx: &egui::Context) -> Option<AgentConfig> {
-        if !self.show {
-            return None;
-        }
+    pub fn render_contents(&mut self, ui: &mut egui::Ui) -> Option<AgentConfig> {
+        let ctx = ui.ctx().clone();
 
         let mut new_config = None;
         let mut import_path: Option<PathBuf> = None;
         let mut should_clear = false;
         let mut should_save = false;
-        let mut should_close = false;
 
         // Build system prompt preview outside the closure to avoid borrowing issues
         let system_prompt_preview = self.build_system_prompt_preview();
 
-        let mut is_open = self.show;
-
-        egui::Window::new("🎭 Character Card")
-            .open(&mut is_open)
-            .default_width(600.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("IDENTITY / CORE & CHARACTER");
+                    ui.small("Operator-owned boundaries are separate from model-reported reflections.");
+                    ui.horizontal(|ui| {
+                        ui.label("Agent name:");
+                        ui.text_edit_singleline(&mut self.config.username);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Your name:");
+                        ui.text_edit_singleline(&mut self.config.operator_name);
+                    });
+                    ui.label("Relationship context:");
+                    ui.add(egui::TextEdit::multiline(&mut self.config.relationship_description).desired_width(f32::INFINITY));
+                    ui.label("Fixed boundaries / one per line / reflection cannot edit these:");
+                    let mut boundaries = self.config.identity_boundaries.join("\n");
+                    if ui.add(egui::TextEdit::multiline(&mut boundaries).desired_width(f32::INFINITY)).changed() {
+                        self.config.identity_boundaries = boundaries.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string).collect();
+                    }
+                    ui.label("Guiding principles / one per line:");
+                    let mut principles = self.config.guiding_principles.join("\n");
+                    if ui.add(egui::TextEdit::multiline(&mut principles).desired_width(f32::INFINITY)).changed() {
+                        self.config.guiding_principles = principles.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string).collect();
+                    }
+                    ui.separator();
                     // Avatar and Import Section
                     ui.horizontal(|ui| {
                         // Show avatar thumbnail if available
@@ -106,7 +122,7 @@ impl CharacterPanel {
                         }
 
                         ui.vertical(|ui| {
-                            ui.heading("Import Character Card");
+                            ui.heading("Character card / optional");
                             ui.label("Drop a PNG character card here or click to browse");
 
                             if ui.button("📁 Browse for Character Card PNG").clicked() {
@@ -119,7 +135,7 @@ impl CharacterPanel {
                             }
 
                             if let Some(ref error) = self.import_error {
-                                ui.colored_label(egui::Color32::RED, format!("Error: {}", error));
+                                ui.colored_label(super::theme::palette(ui).error, format!("Error: {}", error));
                             }
                         });
                     });
@@ -154,7 +170,7 @@ impl CharacterPanel {
                     ui.add_space(16.0);
 
                     ui.separator();
-                    ui.heading("Mood Avatars (UI States)");
+                    ui.heading("Execution-state artwork");
                     ui.add_space(8.0);
 
                     render_mood_avatar_row(ui, "Idle:", &mut self.config.avatar_idle);
@@ -181,8 +197,10 @@ impl CharacterPanel {
                     ui.add_space(8.0);
 
                     // Save/Cancel buttons
+                    ui.checkbox(&mut self.rebuild_prompt_on_save, "Rebuild system prompt from character fields on save");
+                    ui.small("Otherwise the existing system prompt is preserved. All workspaces share one configuration draft.");
                     ui.horizontal(|ui| {
-                        if ui.button("💾 Save Character").clicked() {
+                        if ui.button("Save identity & configuration").clicked() {
                             should_save = true;
                         }
 
@@ -190,22 +208,15 @@ impl CharacterPanel {
                             should_clear = true;
                         }
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Cancel").clicked() {
-                                should_close = true;
-                            }
-                        });
                     });
                 });
-            });
-
-        // Update window state
-        self.show = is_open && !should_close;
 
         // Handle save after the window is closed to avoid borrowing issues
         if should_save {
             // Update system prompt from character data
-            self.config.system_prompt = self.build_system_prompt();
+            if self.rebuild_prompt_on_save {
+                self.config.system_prompt = self.build_system_prompt();
+            }
             new_config = Some(self.config.clone());
         }
 

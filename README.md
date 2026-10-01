@@ -5,6 +5,29 @@ I believe in Universal Basic Digimon, and this is a first cut at such a system.
 It is meant to chat with you. Take actions. Have personal desires and thoughts. Take actions on its own behalf.
 It isn't supposed to be a tool. Its supposed to be your little buddy.
 
+## Native workbench
+
+The Rust/egui desktop has Conversation, Mind / journal, Identity, Affect lab,
+and Settings workspaces. The surprisal/novelty instrument stays alongside them;
+approvals stay in the main chrome, and the event tape can be resized or collapsed.
+
+Choose **Settings → Appearance → Base color** to derive the panels, controls,
+chat, and sphere colors. Changes preview immediately; **Save & apply** persists
+them and **Revert drafts** restores the saved configuration. Moss, Slate, Violet,
+Copper, Neutral, and dark/light modes are available. Warnings and errors retain
+their amber/red safety meanings. Model loading remains in **Settings → Models**.
+
+The desktop still owns the runtime: closing it stops the agent and managed local
+inference. This UI adds no JS/TS, web runtime, service, or daemon.
+
+For isolated native visual QA (synthetic data; no backend/model/config writes):
+
+```bash
+cargo run --offline --features ui-snapshot --example ui_snapshot -- /tmp/ponderer-ui.png appearance B79CDC dark 1240 900
+```
+
+The snapshot destination must not already exist. See [workbench](src/ui/workbench.md).
+
 ## Affect Lab
 
 [Affect Lab](docs/AFFECT_LAB.md) adds experimental local GGUF activation steering.

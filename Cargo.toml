@@ -3,6 +3,9 @@ name = "ponderer"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+ui-snapshot = []
+
 [dependencies]
 ponderer_backend = { path = "ponderer_backend" }
 
@@ -64,3 +67,7 @@ tempfile = "3.25"
 [[bin]]
 name = "ponderer"
 path = "src/main.rs"
+
+[[example]]
+name = "ui_snapshot"
+required-features = ["ui-snapshot"]

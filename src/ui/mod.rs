@@ -6,4 +6,5 @@ pub mod chat;
 pub mod plugin_settings_form;
 pub mod settings;
 pub mod sprite;
+pub mod theme;
 pub mod token_monitor;

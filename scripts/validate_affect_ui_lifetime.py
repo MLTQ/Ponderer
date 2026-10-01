@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -112,8 +113,11 @@ def main():
                 loaded_pid = state["native_pid"]
                 selected = request(base, "/affect-lab/use-for-agent", {})
                 selected["relationship_description"] = "Temporary lifecycle test"
-                request(base, "/config", selected, "PUT")
+                selected["appearance"] = {"base_color": [183, 156, 220], "dark": False}
+                saved = request(base, "/config", selected, "PUT")
+                assert saved["appearance"] == selected["appearance"]
                 durable = config_path.read_text()
+                assert tomllib.loads(durable)["appearance"] == selected["appearance"], "Appearance did not persist through the actual config route"
                 assert "original-model" in durable and "ponderer-local-gguf" not in durable
                 assert selected["llm_api_key"] not in durable, "Ephemeral provider token was persisted"
                 # Both completion clients see this same compatible API endpoint.
@@ -152,7 +156,7 @@ def main():
                 while time.monotonic() < deadline and not all(helpers.inactive(pid) for pid in pids):
                     time.sleep(0.05)
                 assert all(helpers.inactive(pid) for pid in pids), "A model process survived UI-parent pipe closure"
-                print("PASS: explicit load persists across jobs/requests, session provider/config isolation, signed study preserves the mix, and UI closure terminates an active study and the complete inference chain")
+                print("PASS: appearance config round-trip, explicit load persists across jobs/requests, session provider/config isolation, signed study preserves the mix, and UI closure terminates an active study and the complete inference chain")
             finally:
                 if backend.poll() is None:
                     backend.kill()

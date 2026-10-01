@@ -1,8 +1,8 @@
 # affect_lab.rs
 
 Shared asynchronous model/experiment controller. Model connection controls render
-inside Settings General, switching between API and local GGUF editors. The separate
-lab window has Affect mixer, Example library, Test & evidence and Discover lever panes. Loading
+inside Settings / Models, switching between API and local GGUF editors. The embedded
+Affect lab workspace has Affect mixer, Example library, Test & evidence and Discover lever panes. Loading
 chains worker initialization to a cancellable weight-allocation job, and session
 provider selection is explicit. All processes remain owned by the desktop UI.
 
@@ -38,5 +38,5 @@ preserves unrelated drafts; the app blocks saves during provider transitions.
 Selection applies only to the current backend session. Reset restores valid layers
 and neutral strengths even if draft layer bounds are invalid.
 
-The window is opened from AgentApp's controls. It does not launch processes directly
+The workspace is selected from the native navigation tabs. It does not launch processes directly
 or represent experimental steering strengths as measured emotion or experience.

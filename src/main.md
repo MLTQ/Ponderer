@@ -50,6 +50,7 @@ Desktop launcher entry point. Supports:
 | Concurrent desktop launchers | Only the OS lock holder may perform the final discovery check and spawn | Deleting/replacing the lease file while a launcher is active or moving launch outside the lease scope |
 
 ## Notes
+- The native workbench opens at 1240×900 with an 840×640 minimum; appearance is set by the shared configuration draft in `ui/theme.rs`. No web runtime is introduced.
 - Default desktop startup autostarts local backend with generated token; no manual token/code pairing is required.
 - The generated token is persisted with owner-only permissions on Unix so concurrent UI processes do not spawn a second agent over the same state.
 - Discovery only accepts explicit HTTP loopback IP endpoints and local API clients bypass ambient HTTP proxies so the bearer token stays on the host.
