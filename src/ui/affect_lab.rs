@@ -1,4 +1,4 @@
-use crate::api::{AffectLabStart, ApiClient, CACHE_TYPES, MAX_CONTEXT_SIZE};
+use crate::api::{AffectLabStart, ApiClient, GpuDevice, CACHE_TYPES, MAX_CONTEXT_SIZE};
 use crate::config::AgentConfig;
 use eframe::egui;
 use serde_json::{json, Value};
@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 enum LabResult {
     Status(Value),
+    Devices(Value),
     Provider(Box<AgentConfig>),
 }
 struct LabReply {
@@ -15,6 +16,18 @@ struct LabReply {
     action: String,
     mix_version: u64,
     result: Result<LabResult, String>,
+}
+
+fn gpu_device_label(device: &GpuDevice) -> String {
+    let memory = match (device.memory_free_mib, device.memory_total_mib) {
+        (Some(free), Some(total)) => format!(
+            " / {:.1} GiB free of {:.1}",
+            free as f64 / 1024.0,
+            total as f64 / 1024.0
+        ),
+        _ => String::new(),
+    };
+    format!("{} / {}{}", device.id, device.name, memory)
 }
 #[derive(Clone, Default)]
 struct ExamplePair {
@@ -27,6 +40,8 @@ pub struct AffectLabPanel {
     pub show: bool,
     pub open_settings: bool,
     settings: AffectLabStart,
+    gpu_devices: Vec<GpuDevice>,
+    device_engine: Option<String>,
     local_view: bool,
     status: Value,
     reply_tx: flume::Sender<LabReply>,
@@ -77,6 +92,8 @@ impl AffectLabPanel {
                 ..Default::default()
             },
             local_view: false,
+            gpu_devices: Vec::new(),
+            device_engine: None,
             status: json!({"running": false}),
             reply_tx,
             reply_rx,
@@ -149,6 +166,9 @@ impl AffectLabPanel {
                         .map(|c| LabResult::Provider(Box::new(c)));
                 }
                 let status = client.affect_lab_action(&action, body).await?;
+                if action == "devices" {
+                    return Ok(LabResult::Devices(status));
+                }
                 // Starting the worker inspects metadata; loading actually allocates
                 // weights/KV in an asynchronous, cancellable UI-owned job.
                 if action == "start" {
@@ -243,6 +263,24 @@ impl AffectLabPanel {
             self.pending_action = None;
         }
         match reply.result {
+            Ok(LabResult::Devices(value)) => {
+                // Enumeration belongs to that executable, never nvidia-smi's ordering.
+                if value["server_binary"].as_str() == Some(self.settings.server_binary.as_str()) {
+                    match serde_json::from_value::<Vec<GpuDevice>>(value["devices"].clone()) {
+                        Ok(devices) => {
+                            if !devices
+                                .iter()
+                                .any(|d| Some(d.id.as_str()) == self.settings.gpu_device.as_deref())
+                            {
+                                self.settings.gpu_device = None;
+                            }
+                            self.gpu_devices = devices;
+                            self.device_engine = Some(self.settings.server_binary.clone());
+                        }
+                        Err(error) => self.error = Some(format!("Invalid GPU inventory: {error}")),
+                    }
+                }
+            }
             Ok(LabResult::Status(value)) => {
                 if reply.poll {
                     self.poll_error = None;
@@ -314,6 +352,26 @@ impl AffectLabPanel {
     }
     fn available(&self) -> bool {
         self.pending_action.is_none() && !self.job_running()
+    }
+    fn invalidate_gpu_inventory(&mut self) {
+        self.gpu_devices.clear();
+        self.device_engine = None;
+        self.settings.gpu_device = None;
+    }
+    fn gpu_selection_ready(&self) -> bool {
+        self.settings.gpu_layers == 0
+            || (self.device_engine.as_deref() == Some(self.settings.server_binary.as_str())
+                && self
+                    .gpu_devices
+                    .iter()
+                    .any(|device| Some(device.id.as_str()) == self.settings.gpu_device.as_deref()))
+    }
+    fn selected_gpu_label(&self) -> String {
+        self.gpu_devices
+            .iter()
+            .find(|device| Some(device.id.as_str()) == self.settings.gpu_device.as_deref())
+            .map(gpu_device_label)
+            .unwrap_or_else(|| "Choose a GPU after scanning".into())
     }
     pub fn provider_change_pending(&self) -> bool {
         matches!(
@@ -471,15 +529,58 @@ impl AffectLabPanel {
             }
         }
         ui.add_enabled_ui(editable, |ui| {
-            ui.label("llama-server executable"); ui.add(egui::TextEdit::singleline(&mut self.settings.server_binary).desired_width(f32::INFINITY));
-            if let Some(cuda) = dirs::home_dir().map(|home| home.join("Code/llama.cpp-cuda/build/bin/llama-server")).filter(|p| p.is_file()) {
-                if ui.small_button("Use detected CUDA engine").clicked() { self.settings.server_binary = cuda.to_string_lossy().into_owned(); }
+            ui.label("llama-server executable");
+            if ui
+                .add(egui::TextEdit::singleline(&mut self.settings.server_binary).desired_width(f32::INFINITY))
+                .changed()
+            {
+                self.invalidate_gpu_inventory();
             }
+            if let Some(cuda) = dirs::home_dir().map(|home| home.join("Code/llama.cpp-cuda/build/bin/llama-server")).filter(|p| p.is_file()) {
+                if ui.small_button("Use detected CUDA engine").clicked() {
+                    self.settings.server_binary = cuda.to_string_lossy().into_owned();
+                    self.invalidate_gpu_inventory();
+                }
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Inference GPU");
+                if ui.button(if self.device_engine.is_some() { "Refresh GPUs" } else { "Scan GPUs" }).clicked() {
+                    self.request(client, runtime, "devices", json!({"server_binary":self.settings.server_binary}));
+                }
+            });
+            egui::ComboBox::from_id_salt("affect_gpu_device")
+                .selected_text(self.selected_gpu_label())
+                .width(ui.available_width().min(600.0))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.settings.gpu_device, None, "Choose a GPU");
+                    for device in &self.gpu_devices {
+                        ui.selectable_value(&mut self.settings.gpu_device, Some(device.id.clone()), gpu_device_label(device));
+                    }
+                });
+            if self.device_engine.is_some() && self.gpu_devices.is_empty() {
+                ui.colored_label(super::theme::palette(ui).warning, "No GPUs reported by this executable. Choose a GPU-capable engine or explicitly choose CPU below.");
+            }
+            ui.small("Names and device IDs come from this llama-server. Free VRAM is a snapshot at the last scan, not a live reservation.");
+            ui.label(match self.settings.gpu_layers {
+                -1 => "Placement: all model layers on the selected GPU",
+                0 => "Placement: CPU only",
+                _ => "Placement: explicit partial GPU offload",
+            });
+            ui.small("No automatic multi-GPU split, CPU fallback, or context reduction. All-GPU loading fails if VRAM is insufficient.");
+            ui.collapsing("Advanced / GPU–CPU offload", |ui| {
+                ui.selectable_value(&mut self.settings.gpu_layers, -1, "All layers on GPU (default)");
+                let partial = if self.settings.gpu_layers > 0 { self.settings.gpu_layers } else { 32 };
+                ui.selectable_value(&mut self.settings.gpu_layers, partial, "Partial GPU offload");
+                if self.settings.gpu_layers > 0 {
+                    ui.add(egui::DragValue::new(&mut self.settings.gpu_layers).range(1..=999).prefix("GPU layers: "));
+                }
+                ui.selectable_value(&mut self.settings.gpu_layers, 0, "CPU only");
+                ui.small("This changes weight placement, not affect-steering layer ranges. CPU offload helps fit larger models but is slower.");
+            });
             ui.horizontal(|ui| {
-                ui.label("GPU layers"); ui.add(egui::DragValue::new(&mut self.settings.gpu_layers).range(0..=999));
                 ui.label("CPU threads"); ui.add(egui::DragValue::new(&mut self.settings.threads).range(1..=128));
             });
-            ui.small("Zero GPU layers means CPU. Offload requires a GPU-capable executable as well; extraction currently uses CPU.");
+            ui.small("These placement controls apply to inference. Vector extraction uses its separate CPU runtime.");
             ui.collapsing("Context, KV cache and attention", |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Context tokens"); ui.add(egui::DragValue::new(&mut self.settings.context_size).range(1024..=MAX_CONTEXT_SIZE));
@@ -502,7 +603,7 @@ impl AffectLabPanel {
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
-                    editable && !self.settings.model_path.is_empty(),
+                    editable && !self.settings.model_path.is_empty() && self.gpu_selection_ready(),
                     egui::Button::new("Load local model"),
                 )
                 .clicked()
@@ -556,9 +657,10 @@ impl AffectLabPanel {
                 }
             ));
             ui.small(format!(
-                "{} tokens · GPU layers {} · K {} / V {} · flash {} · unified KV {}",
+                "{} tokens · GPU {} · offload {} · K {} / V {} · flash {} · unified KV {}",
                 self.status["context_size"],
-                self.status["gpu_layers"],
+                self.status["inference_settings"]["gpu_device"],
+                self.status["inference_settings"]["gpu_offload"],
                 self.status["inference_settings"]["cache_type_k"],
                 self.status["inference_settings"]["cache_type_v"],
                 self.status["inference_settings"]["flash_attention"],
@@ -622,6 +724,22 @@ impl AffectLabPanel {
                 2 => self.evidence(ui, client, runtime),
                 _ => self.discovery(ui, client, runtime),
             });
+    }
+
+    #[cfg(any(test, feature = "ui-snapshot"))]
+    pub fn load_model_snapshot_fixture(&mut self) {
+        self.local_view = true;
+        self.settings.model_path = "/synthetic-fixture/model.gguf".into();
+        self.settings.server_binary = "/synthetic-fixture/llama-server".into();
+        self.settings.apply_200k_preset();
+        self.settings.gpu_device = Some("CUDA0".into());
+        self.device_engine = Some(self.settings.server_binary.clone());
+        self.gpu_devices = vec![GpuDevice {
+            id: "CUDA0".into(),
+            name: "NVIDIA GeForce RTX 4090 · synthetic fixture".into(),
+            memory_total_mib: Some(24576),
+            memory_free_mib: Some(15360),
+        }];
     }
 
     #[cfg(any(test, feature = "ui-snapshot"))]
@@ -1380,6 +1498,66 @@ fn validation_help(ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn inventory(panel: &AffectLabPanel, engine: &str, devices: Value) -> LabReply {
+        LabReply {
+            epoch: panel.epoch,
+            poll: false,
+            action: "devices".into(),
+            mix_version: panel.mix_version,
+            result: Ok(LabResult::Devices(
+                json!({"server_binary":engine,"devices":devices}),
+            )),
+        }
+    }
+    #[test]
+    fn all_gpu_requires_current_engine_inventory_and_explicit_choice() {
+        let mut p = AffectLabPanel::new();
+        assert_eq!(p.settings.gpu_layers, -1);
+        assert!(!p.gpu_selection_ready());
+        let engine = p.settings.server_binary.clone();
+        let status = p.status.clone();
+        p.strengths.insert("excitement".into(), 0.4);
+        let r = inventory(
+            &p,
+            &engine,
+            json!([{"id":"CUDA0","name":"RTX 4090","memory_free_mib":15360,"memory_total_mib":24576}]),
+        );
+        p.handle_reply(r);
+        assert_eq!(p.status, status);
+        assert_eq!(p.strengths["excitement"], 0.4);
+        assert!(!p.gpu_selection_ready());
+        p.settings.gpu_device = Some("CUDA0".into());
+        assert!(p.gpu_selection_ready());
+        assert!(p
+            .selected_gpu_label()
+            .contains("RTX 4090 / 15.0 GiB free of 24.0"));
+        p.settings.apply_200k_preset();
+        assert_eq!(p.settings.gpu_device.as_deref(), Some("CUDA0"));
+        assert_eq!(p.settings.gpu_layers, -1);
+        p.settings.server_binary = "other-engine".into();
+        assert!(!p.gpu_selection_ready());
+        p.invalidate_gpu_inventory();
+        assert!(p.settings.gpu_device.is_none());
+        p.settings.gpu_layers = 0;
+        assert!(p.gpu_selection_ready());
+    }
+    #[test]
+    fn gpu_refresh_drops_missing_choice_and_ignores_wrong_engine_or_epoch() {
+        let mut p = AffectLabPanel::new();
+        p.load_model_snapshot_fixture();
+        let engine = p.settings.server_binary.clone();
+        let r = inventory(&p, "old-engine", json!([]));
+        p.handle_reply(r);
+        assert!(p.gpu_selection_ready());
+        let mut r = inventory(&p, &engine, json!([]));
+        p.epoch += 1;
+        p.handle_reply(r);
+        assert!(p.gpu_selection_ready());
+        r = inventory(&p, &engine, json!([]));
+        p.handle_reply(r);
+        assert!(p.settings.gpu_device.is_none());
+        assert!(!p.gpu_selection_ready());
+    }
     fn reply(
         panel: &AffectLabPanel,
         poll: bool,

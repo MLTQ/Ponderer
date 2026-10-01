@@ -46,5 +46,7 @@ The default app never constructs synthetic fixtures.
 `isolated_snapshot` and `render_snapshot` are compiled only for tests or the
 opt-in `ui-snapshot` feature. They use a loopback port-1 placeholder, no event
 stream, no backend polling, no model loading and visibly labeled synthetic data.
+The `models` fixture previews local GPU selection with explicitly synthetic
+inventory and no probe or load.
 Headless navigation/layout tests and the real eframe screenshot example use this
 factory without affecting live configuration. See [workbench](workbench.md).

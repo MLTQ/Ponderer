@@ -91,5 +91,6 @@ Frontend-only backend API client for Ponderer. Encapsulates authenticated REST c
 - Conversation list decode errors now include payload preview context to simplify diagnosing response-shape mismatches.
 - Plugin manifest/settings DTOs are intentionally not redefined here; the backend crate is their single source of truth.
 - Plugin runtime status DTOs are also re-exported from `ponderer_backend::plugin_contract`; the desktop can query them without schema duplication.
+- `AffectLabStart` and `GpuDevice` are shared backend types. `affect_lab_action("devices", {"server_binary": ...})` returns engine-specific inventory without starting the model worker; this reply is not experiment status. All-GPU requests use `gpu_layers=-1` and one explicit `gpu_device`.
 - `ApiClient::get_turn_prompt` fetches `/v1/turns/:id/prompt` for per-message “View Prompt” inspection (context prompt + optional stored system prompt).
 - WS event mapping now decodes `generation_started`, `generation_metrics`, and `generation_finished`, preserving generation identity, source, optional conversation, samples, and outcome for the live monitor.

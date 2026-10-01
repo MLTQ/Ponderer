@@ -14,3 +14,5 @@ env -u WAYLAND_DISPLAY WINIT_UNIX_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -
 
 This example is not compiled into the default app and does not attach to the
 operator's live backend, load a GGUF or write agent configuration.
+The `models` workspace opens the local connection editor with visibly synthetic
+4090 inventory, all-GPU mode and the 200k preset. It does not probe real devices.

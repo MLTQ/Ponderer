@@ -20,6 +20,12 @@ their amber/red safety meanings. Model loading remains in **Settings → Models*
 The desktop still owns the runtime: closing it stops the agent and managed local
 inference. This UI adds no JS/TS, web runtime, service, or daemon.
 
+For local GGUF inference, choose the llama-server executable in **Settings →
+Models**, **Scan GPUs**, then select the GPU by name. All model layers run on
+that device by default; partial GPU/CPU offload is an advanced, explicit choice.
+Insufficient VRAM fails visibly without silently shrinking context or falling
+back to CPU. The 200k/Q4_1 preset preserves your GPU selection.
+
 For isolated native visual QA (synthetic data; no backend/model/config writes):
 
 ```bash

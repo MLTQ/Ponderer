@@ -225,7 +225,7 @@ impl AgentApp {
             "mind" => Workspace::Mind,
             "identity" => Workspace::Identity,
             "lab" => Workspace::AffectLab,
-            "settings" | "appearance" => Workspace::Settings,
+            "settings" | "appearance" | "models" => Workspace::Settings,
             _ => Workspace::Conversation,
         };
         if workspace == "appearance" {
@@ -233,6 +233,10 @@ impl AgentApp {
         }
         if workspace == "lab" {
             app.affect_lab.load_snapshot_fixture();
+        }
+        if workspace == "models" {
+            app.settings_panel.open_tab("core.general");
+            app.affect_lab.load_model_snapshot_fixture();
         }
         app.chat_history = [
             ("operator", "Keep the sphere visible. I want this to feel like a technical workbench."),

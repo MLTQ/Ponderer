@@ -11,7 +11,7 @@ use tokio_tungstenite::tungstenite::http::header as ws_header;
 use tokio_tungstenite::tungstenite::http::HeaderValue as WsHeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 
-pub use ponderer_backend::affect_lab::{AffectLabStart, CACHE_TYPES, MAX_CONTEXT_SIZE};
+pub use ponderer_backend::affect_lab::{AffectLabStart, GpuDevice, CACHE_TYPES, MAX_CONTEXT_SIZE};
 
 #[allow(unused_imports)]
 pub use ponderer_backend::plugin_contract::{

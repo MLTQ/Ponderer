@@ -37,7 +37,7 @@ def descendants(pid):
     result = []
     try:
         children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return result
     for child in map(int, children):
         result.append(child)
@@ -88,13 +88,18 @@ def main():
                     except OSError:
                         time.sleep(0.05)
                 request(base, "/agent/pause", {"paused": True}, "PUT")
-                state = request(base, "/affect-lab/start", {"model_path": str(model), "server_binary": str(fake), "context_size": 200_000, "unified_kv_cache": True, "cache_type_k": "q4_1", "cache_type_v": "q4_1", "flash_attention": "on"})
+                inventory = request(base, "/affect-lab/devices", {"server_binary": str(fake)})
+                assert inventory["devices"][0]["id"] == "CUDA0"
+                assert inventory["devices"][0]["name"] == "Fixture GPU"
+                state = request(base, "/affect-lab/start", {"model_path": str(model), "server_binary": str(fake), "gpu_layers": -1, "gpu_device": "CUDA0", "context_size": 200_000, "unified_kv_cache": True, "cache_type_k": "q4_1", "cache_type_v": "q4_1", "flash_attention": "on"})
                 assert state["running"]
                 assert state["inference_settings"]["context_size"] == 200_000
                 assert state["inference_settings"]["cache_type_k"] == "q4_1"
                 assert state["inference_settings"]["cache_type_v"] == "q4_1"
                 assert state["inference_settings"]["unified_kv_cache"]
                 assert state["inference_settings"]["flash_attention"] == "on"
+                assert state["inference_settings"]["gpu_device"] == "CUDA0"
+                assert state["inference_settings"]["gpu_offload"] == "all"
                 assert "example_library" in state
                 assert state["capabilities"]["automatic_discovery"]
                 assert state["capabilities"]["signed_controls"]
@@ -156,7 +161,7 @@ def main():
                 while time.monotonic() < deadline and not all(helpers.inactive(pid) for pid in pids):
                     time.sleep(0.05)
                 assert all(helpers.inactive(pid) for pid in pids), "A model process survived UI-parent pipe closure"
-                print("PASS: appearance config round-trip, explicit load persists across jobs/requests, session provider/config isolation, signed study preserves the mix, and UI closure terminates an active study and the complete inference chain")
+                print("PASS: GPU inventory and explicit all-GPU selection, 200k/Q4_1 settings, appearance config round-trip, explicit load persists across jobs/requests, session provider/config isolation, signed study preserves the mix, and UI closure terminates an active study and the complete inference chain")
             finally:
                 if backend.poll() is None:
                     backend.kill()

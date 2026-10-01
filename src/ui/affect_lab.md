@@ -32,6 +32,16 @@ Inference/memory settings expose context up to 1,048,576 tokens, unified KV,
 separate K/V types and flash attention. The 200k/Q4_1 preset changes these four
 settings only; executable and GPU placement are explicitly chosen by the operator.
 
+Inference defaults to all model layers on one explicitly selected GPU. Scan/refresh
+enumerates the selected engine's IDs, names and optional total/free MiB without
+loading a model; it never assumes `nvidia-smi` ordering. Inventory replies are
+distinct from experiment status and cannot discard mixes or example drafts. Engine
+edits invalidate inventory/selection, stale engine/epoch replies are ignored, and
+refresh clears a device that disappeared. Load requires a current inventory and
+choice unless advanced CPU-only mode is explicitly selected. Partial GPU offload
+is also advanced. No automatic split, CPU fallback or context reduction occurs.
+The separate CPU extraction runtime and snapshot nature of free VRAM are labeled.
+
 Provider selection and stop return an updated AgentConfig to the application so
 Settings and Character stay synchronized. Provider-only Settings synchronization
 preserves unrelated drafts; the app blocks saves during provider transitions.

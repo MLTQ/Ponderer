@@ -9,17 +9,22 @@ API providers remain available; the local provider can be selected for one sessi
 ## Desktop use
 
 Rebuild and restart Ponderer. Model connection/loading lives in **Settings →
-General → Model connection**; the toolbar's **Affect Lab** contains experiments.
+Models → Model connection**; the **Affect lab** workspace contains experiments.
 
 1. Switch the model connection editor from **API** to **Local GGUF**. This changes
    the editor only, not the running provider. Select a single model GGUF or an
    LM Studio directory containing one model.
    Projector files beginning with `mmproj` are excluded from directory selection.
-2. Choose CPU threads, GPU layers, context size, KV/cache options and the
-   `llama-server` executable. Zero GPU layers uses CPU; nonzero layers also need
-   a GPU-capable engine. **Use detected CUDA engine** offers the standalone CUDA
-   executable if present in the operator's checkout. The 200k preset does not
-   change executable/GPU layers. **Load local model** inspects metadata then queues
+2. Choose the `llama-server` executable, **Scan GPUs**, then choose a GPU by name.
+   The picker uses that engine's device IDs, not `nvidia-smi` indices, and shows
+   free VRAM at the last scan. **Use detected CUDA engine** offers the standalone
+   CUDA executable if present in the operator's checkout. All model layers on the
+   selected GPU is the default. **Advanced / GPU–CPU offload** permits explicit
+   partial offload or CPU-only mode; it controls weight placement, not affect
+   steering. Automatic multi-GPU splitting, CPU fallback and memory auto-fit are
+   disabled. Insufficient VRAM produces a visible error rather than shrinking
+   context. Choose CPU threads, context and KV/cache options; the 200k preset
+   preserves executable, GPU and offload mode. **Load local model** inspects metadata then queues
    actual weight/KV allocation, with visible progress and native process state.
    **Load weights / retry** can reload after a test.
 3. Open **Example library**. Contentment, satisfaction, excitement, curiosity and
@@ -100,17 +105,20 @@ Changing model files or vector content invalidates their fingerprints.
 For a different llama.cpp installation, set `PONDERER_LLAMA_INCLUDE` to the matching
 header directory and `PONDERER_LLAMA_LIB` to the library directory before starting
 Ponderer. The server executable must use a compatible engine installation too.
-GPU extraction needs a library build with the relevant device support; selecting
-GPU layers does not add GPU support to a CPU-only library.
+The bundled vector extractor currently uses a separate CPU runtime. Selecting an
+inference GPU does not move extraction onto it or add GPU support to a CPU-only
+engine. The UI labels this distinction explicitly.
 
 ## Long-context memory settings
 
 The **200k / Q4_1 preset** selects 200,000 tokens, unified KV, `q4_1` for both K and
-V, and flash attention `on`. It leaves the executable and GPU layers unchanged.
+V, and flash attention `on`. It leaves the executable, GPU and offload mode unchanged.
 The default remains a conservative 16,384-token, F16-cache configuration.
 
 | UI setting | Native llama.cpp flags |
 | --- | --- |
+| All layers on selected GPU | `--gpu-layers all --device <engine-device-id> --split-mode none --main-gpu 0 --fit off` |
+| Explicit CPU mode | `--gpu-layers 0 --device none --split-mode none --fit off` |
 | Context size | `--ctx-size 200000` |
 | Unified KV cache | `--kv-unified` (or explicit `--no-kv-unified`) |
 | K / V cache | `--cache-type-k q4_1 --cache-type-v q4_1` |
@@ -136,11 +144,14 @@ process chain; longer deadlines do not create detached workers. The extraction
 recipe continues to use its separate short 1,024-token context and default caches,
 so changing inference KV settings does not silently change how vectors are built.
 
-On this machine, `/usr/bin/llama-server` has no GPU devices. The GPU smoke test used
-`/home/m/Code/llama.cpp-cuda/build/bin/llama-server`, GPU layers `999`, and
-`CUDA_VISIBLE_DEVICES=0` to select the RTX 4090. To reproduce that device isolation,
-launch Ponderer with that environment variable, choose the CUDA executable in the
-lab, then apply the preset. No CUDA/LM Studio installation or service was changed.
+On this machine, `/usr/bin/llama-server` has no GPU devices. Prior GPU smoke tests
+used `/home/m/Code/llama.cpp-cuda/build/bin/llama-server` with an environment-based
+device isolation workaround. The current picker removes the need for that
+workaround: scan the CUDA engine and explicitly select the RTX 4090. At the latest
+diagnostic scan it reported `CUDA0` for the 4090 and `CUDA1` for the 2070 SUPER,
+opposite to their `nvidia-smi` indices. Existing environment visibility overrides
+can change the inventory; always use the engine's names/IDs. No CUDA/LM Studio
+installation or service was changed.
 Use a compatible engine with the required kernels; another build/device may reject
 the same cache type or use slower fallback operations. The CUDA build's cache says
 `GGML_CUDA_FA_ALL_QUANTS=OFF`, so full-window performance of its quantized attention
