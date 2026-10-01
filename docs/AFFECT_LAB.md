@@ -66,6 +66,28 @@ Models → Model connection**; the **Affect lab** workspace contains experiments
 8. In Settings select **Use for this session** to route ordinary
    completions, reflection and streaming tool calls through the local provider.
    This selection cancels the current agent turn. It supports text inference.
+9. For conversation choose **Settings → Behavior → Conversation mode → Direct**
+   and **Save & apply**. This still permits tools but yields after one compact chat
+   pass; Agentic retains richer task-context/continuation behavior. Neither option
+   disables the ambient loop. Return to **Conversation** and chat normally. Mixer
+   changes apply at request boundaries without clearing conversation history.
+
+The real checkpoint's end-to-end conversation regression (2026-10-01, RTX 4090,
+all layers, 200k/unified Q4_1/flash) passed ten conversation turns across neutral,
+contentment, excitement, a two-vector mix, negative excitement and neutral reset.
+Earlier names survived each profile change and a single handoff/resume. Twenty-four
+fixed-message, temperature-zero, seed-42 probes included twelve strict arithmetic/
+JSON checks, all passing; behavior probes changed at every non-neutral setting,
+and neutral reset reproduced the initial outputs. This is operation and small
+task-integrity evidence, not affect calibration or proof of feeling. Tested gain
+was the default one. Measured conversation replies were roughly 5–27 seconds,
+handoff 33 seconds, and foreground chat with ambient work 42 seconds; existing
+inference may finish before a foreground request gets the lane. Full-window and
+general affect/strong-mix quality still need independent studies.
+
+Run [validate_steered_conversation.py](../scripts/validate_steered_conversation.md)
+to repeat with isolated configuration, database and copied checkpoint-matched
+vectors. It never changes the live operator's chats/settings or sends Telegram.
 
 Quiet background polling never disables controls or inserts/removes a spinner.
 Older poll responses cannot overwrite a newer command, and acknowledgments cannot

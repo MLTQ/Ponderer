@@ -1,5 +1,11 @@
 # app.rs
 
+Streaming preview text survives empty provider-request boundaries and repeated
+prefixes; `done` alone is not completion of a multi-tool operator turn. Durable
+operator actions (including error fallbacks), explicit stop/input or conversation
+switches clear it. This prevents tool-round blinking without changing periodic
+history/status polling.
+
 Workspace navigation calls the continuity/journal view Mind; runtime ownership
 remains in the launcher/lifecycle code rather than repeated decorative labels.
 

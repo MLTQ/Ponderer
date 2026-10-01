@@ -4,6 +4,13 @@ Visible headings are concise (Settings, Appearance); base-color explanations are
 attached to the control tooltip. Live preview, saved/revert behavior, provider
 isolation and warning colors are unchanged.
 
+Behavior includes an explicit Direct/Agentic conversation-mode dropdown. Direct
+uses one compact chat pass (still with optional tools); Agentic retains task
+continuations and richer OODA context. It is an ordinary saved/revertible draft,
+not silently changed by local-provider selection, and does not disable the
+ambient loop. Unlimited tool iterations still have an independent no-progress
+guard.
+
 ## Purpose
 Implements the embedded Settings workspace for the native desktop UI. It keeps core agent settings in fixed tabs and appends schema-driven settings tabs from discovered plugin manifests.
 

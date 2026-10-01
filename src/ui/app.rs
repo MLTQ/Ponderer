@@ -95,6 +95,28 @@ struct StreamingChatPreview {
     content: String,
 }
 
+/// `done` ends one provider request, not the operator's multi-tool turn.
+/// Keep the last bubble across empty boundaries and repeated prefix streams;
+/// remove it only when the durable turn is saved (or explicitly stopped).
+fn update_chat_preview(
+    preview: &mut Option<StreamingChatPreview>,
+    conversation_id: &str,
+    content: &str,
+) {
+    if content.trim().is_empty() {
+        return;
+    }
+    if preview.as_ref().is_some_and(|previous| {
+        previous.conversation_id == conversation_id && previous.content.starts_with(content)
+    }) {
+        return;
+    }
+    *preview = Some(StreamingChatPreview {
+        conversation_id: conversation_id.into(),
+        content: content.into(),
+    });
+}
+
 #[derive(Clone)]
 struct LiveToolProgress {
     conversation_id: String,
@@ -715,20 +737,7 @@ impl eframe::App for AgentApp {
                         }
                     }
                     // Per-conversation streaming preview for the chat pane.
-                    if *done && content.trim().is_empty() {
-                        if self
-                            .streaming_chat_preview
-                            .as_ref()
-                            .is_some_and(|preview| preview.conversation_id == *conversation_id)
-                        {
-                            self.streaming_chat_preview = None;
-                        }
-                    } else {
-                        self.streaming_chat_preview = Some(StreamingChatPreview {
-                            conversation_id: conversation_id.clone(),
-                            content: content.clone(),
-                        });
-                    }
+                    update_chat_preview(&mut self.streaming_chat_preview, conversation_id, content);
                     continue;
                 }
                 FrontendEvent::GenerationStarted {
@@ -780,7 +789,7 @@ impl eframe::App for AgentApp {
                 }
                 FrontendEvent::ActionTaken { action, .. } => {
                     self.last_action = Some(action.clone());
-                    if action.contains("operator") {
+                    if action.contains("operator") || action == "Replied with failure fallback" {
                         self.refresh_conversations();
                         self.refresh_chat_history();
                         self.streaming_chat_preview = None;
@@ -1331,7 +1340,22 @@ fn classify_prompt_section(title: &str, body: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_subtask_id;
+    use super::{parse_subtask_id, update_chat_preview};
+
+    #[test]
+    fn tool_round_boundaries_and_repeated_prefixes_do_not_flash_preview() {
+        let mut preview = None;
+        update_chat_preview(&mut preview, "chat", "Here, still here");
+        for content in ["", "H", "Here", "Here, still here", ""] {
+            update_chat_preview(&mut preview, "chat", content);
+            assert_eq!(preview.as_ref().unwrap().content, "Here, still here");
+        }
+        update_chat_preview(&mut preview, "chat", "A new answer");
+        assert_eq!(preview.as_ref().unwrap().content, "A new answer");
+        update_chat_preview(&mut preview, "other", "Here");
+        assert_eq!(preview.as_ref().unwrap().conversation_id, "other");
+        assert_eq!(preview.as_ref().unwrap().content, "Here");
+    }
 
     #[test]
     fn extracts_subtask_id_from_bracket_prefix() {

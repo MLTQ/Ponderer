@@ -44,6 +44,20 @@ Local Qwen3.5-family inference uses a tool-capable chat template even when a GGU
 conversion ships a simplified one; all requested affects are forwarded as one
 native vector list. Bare thinking labels and unparsed tool calls fail visibly.
 
+For interactive local chat, choose **Settings → Behavior → Conversation mode →
+Direct**, then **Save & apply**. Direct still supports tools, but avoids autonomous
+task continuations and the larger task-context prompt; ambient cognition is a
+separate setting. Load/select the local provider in Models, adjust built sliders
+in Affect lab, wait for the mix acknowledgment, then continue in Conversation.
+The next request uses the new mix; engine reloads reset caches, not the conversation.
+Session handoffs finish with one final reply, and repeated unchanged tool work is
+stopped even when iteration budgets are disabled. Background orientation honors
+ambient-disable/chat priority and no longer repeatedly queues timed-out local work.
+
+The opt-in [steered conversation regression](scripts/validate_steered_conversation.md)
+tests the actual backend routes, conversation recall, signed/mixed controls,
+fixed-seed task checks, handoff/resume, ambient coexistence and UI-owned shutdown.
+
 ## Plugin System
 
 Ponderer treats optional capabilities as versioned plugin packages. A plugin can

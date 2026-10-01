@@ -306,7 +306,7 @@ impl SettingsPanel {
                 (CORE_TAB_CONNECTIONS, "Connections"),
                 (CORE_TAB_LOOPS, "Autonomy & contact"),
                 (CORE_TAB_MEMORY, "Data & memory"),
-                (CORE_TAB_BEHAVIOR, "Turn budgets"),
+                (CORE_TAB_BEHAVIOR, "Behavior"),
                 (CORE_TAB_SYSTEM, "System prompt"),
                 (CORE_TAB_SCHEDULES, "Schedules"),
             ] {
@@ -423,6 +423,30 @@ impl SettingsPanel {
 
     fn render_behavior_tab(&mut self, ui: &mut egui::Ui) {
         ui.heading("Behavior");
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Conversation mode:");
+            egui::ComboBox::from_id_salt("private_chat_execution_mode")
+                .selected_text(if self.config.private_chat_mode == "direct" {
+                    "Direct"
+                } else {
+                    "Agentic"
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.config.private_chat_mode,
+                        "direct".into(),
+                        "Direct",
+                    );
+                    ui.selectable_value(
+                        &mut self.config.private_chat_mode,
+                        "agentic".into(),
+                        "Agentic",
+                    );
+                });
+        });
+        ui.small("Direct replies once, with tools if needed. Agentic can continue a task across turns. This does not change the ambient loop.");
         ui.add_space(8.0);
 
         ui.horizontal(|ui| {
@@ -1156,6 +1180,28 @@ impl SettingsPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversation_mode_is_a_saved_draft_not_a_provider_side_effect() {
+        let mut panel = SettingsPanel::new(AgentConfig::default());
+        panel.config.private_chat_mode = "direct".into();
+        assert!(panel.has_unsaved_changes());
+        panel.sync_provider_from_config(&AgentConfig {
+            llm_model: "local-fixture".into(),
+            ..Default::default()
+        });
+        assert_eq!(panel.config.private_chat_mode, "direct");
+        panel.revert_drafts();
+        assert_eq!(panel.config.private_chat_mode, "agentic");
+        panel.config.private_chat_mode = "direct".into();
+        panel.sync_from_config(panel.config.clone());
+        assert!(!panel.has_unsaved_changes());
+        let context = egui::Context::default();
+        let _ = context.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| panel.render_behavior_tab(ui));
+        });
+        assert_eq!(panel.config.private_chat_mode, "direct");
+    }
     #[test]
     fn deliberate_loose_action_updates_saved_fields_without_erasing_theme_draft() {
         let mut panel = SettingsPanel::new(AgentConfig::default());
