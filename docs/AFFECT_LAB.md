@@ -1,8 +1,9 @@
 # GGUF Affect Lab
 
-Affect Lab builds experimental directions from matched descriptions of the
-assistant's own state, applies them during local inference, and records neutral
-and steered completions. It uses llama.cpp and a small bundled extractor. Existing
+Affect Lab builds experimental directions from matched descriptions or actual
+responses, applies them during local inference, and records neutral and steered
+completions. Label-driven discovery searches for empirically useful more/less
+settings; it can also fail without finding one. It uses llama.cpp and a small bundled extractor. Existing
 API providers remain available; the local provider can be selected for one session.
 
 ## Desktop use
@@ -27,8 +28,11 @@ General → Model connection**; the toolbar's **Affect Lab** contains experiment
    derives a model-specific direction, not an emotion labeler. Built recipe texts
    are used only when their recipe fingerprint matches. Edits are UI drafts until
    built; polling cannot overwrite them. Every recipe is an unvalidated hypothesis.
-4. In **Affect mixer**, combine built affects using sliders. Their total is bounded
-   by one; at most eight nonzero directions are supported. After a 450 ms editing
+4. In **Affect mixer**, combine built affects using signed sliders. The sum of their
+   absolute values is bounded by one; opposite signs cannot cancel the budget.
+   At most eight nonzero directions are supported. Advanced amplification defaults
+   to one and is bounded to four; it multiplies the entire mix and requires retesting.
+   Native sign is not a measured affect scale. After a 450 ms editing
    pause the mix is sent automatically, without an Apply-state step. Acknowledged
    and currently loaded mixes are distinct. The next request may reload the engine;
    avoid frequent changes during long tasks. Reset works after invalid layer edits.
@@ -40,7 +44,21 @@ General → Model connection**; the toolbar's **Affect Lab** contains experiment
    and intended affect/choice changes need human review. Truncation is visible.
    Save separate affect/quality assessments and notes into the fingerprinted JSON
    report. Tests preserve the agent's requested mix.
-6. In Settings select **Use for this session** to route ordinary
+6. In **Discover lever**, enter a label such as `melodramatic` and optionally define
+   what you mean. The neutral model drafts an observable definition/rubric and eight
+   actual high/low responses to fixed ordinary training tasks. The experiment builds
+   a vector, searches layer ranges, signs and amplification, then tests candidate
+   more/less profiles on separate confirmation tasks, repeated seeds and matched
+   shuffled-vector controls. Raw responses, scores and failures are shown. A failed
+   candidate is not offered as a tested lever. Retest can reuse the latest unchanged
+   vector, never an arbitrary submitted report path. No experiment changes the
+   agent's default mix; adopting a tested setting is an explicit UI action.
+7. In **Test & evidence → Explore signed controls and combinations**, select up to
+   four built controls. Three controls produce 120 outputs: ten conditions, six tasks,
+   two seeds. Conditions include neutral, each signed control, a positive mixture,
+   an opposed-sign mixture and a three-way mixture. Scores are anonymous neutral
+   model judgments, with every raw output and accuracy/format check retained.
+8. In Settings select **Use for this session** to route ordinary
    completions, reflection and streaming tool calls through the local provider.
    This selection cancels the current agent turn. It supports text inference.
 
@@ -71,7 +89,12 @@ extractor compiles on its first build; a failed compile reports its log path.
 Artifacts live under `affect_lab/` in Ponderer's working directory, or the directory
 specified by `PONDERER_AFFECT_DATA_DIR`. They are excluded from Git. Each successful
 build has a vector GGUF, manifest, recipe, target/control texts and extraction log.
-Comparison reports are JSON files in `comparisons/`. Model weights are read only.
+Comparison reports are JSON files in `comparisons/`; discovery plans/searches/
+confirmations are in `discoveries/<id>/report.json`, and larger studies in `studies/`.
+Partial evidence is checkpointed after each condition, so interrupted jobs retain
+useful outputs. Latest matching discovery/study evidence is restored on worker
+startup. Rebuilt vectors or changed inference settings make recommendations
+historical and disable adoption. Model weights are read only.
 Changing model files or vector content invalidates their fingerprints.
 
 For a different llama.cpp installation, set `PONDERER_LLAMA_INCLUDE` to the matching
@@ -145,19 +168,54 @@ the expected dimensions, a finite unit norm and a unique layer index. Checkpoint
 and vector SHA-256 are verified before applying steering. Split GGUFs and non-ChatML
 extraction templates are currently unsupported and produce an explicit error.
 
-Strengths are nonnegative and their combined value is limited to one. This is a
-mechanical intervention bound, not a validated affect scale. A direction can encode
+Matched-response discovery places a shared task in the user role and the contrasting
+actual response in the assistant role, followed by the same continuation. It uses
+the same extraction contract, but records a separate recipe version/fingerprint.
+Signed strengths are in −1..1, their combined absolute value is limited to one,
+and optional whole-profile amplification is in 1..4. These are mechanical bounds,
+not validated affect scales. A direction can encode
 language, persona, topic or other correlated properties. Neither emotion words nor
 changed choices establish subjective experience. Intrinsic reward, learning from
 outcomes and automatic appraisal-driven changes are separate future work.
 
-The UI distinguishes geometry/file integrity, changed output, basic task integrity
-and operator judgment of the intended construct. None amounts to calibration.
-Repeated unseen tasks, individual controls before mixtures, multiple strengths and
-layer ranges, shuffled/placebo interventions and blinded reviews remain necessary
-before claiming useful affect specificity. The lab does not yet run placebo/shuffle
-controls, confidence intervals or repeated-seed evaluations. Existing local reports
-remain on disk, while the UI shows the last comparison of the current worker session.
+The UI distinguishes geometry/file integrity, changed output, task integrity,
+exploratory model-judged confirmation and independent validation. The same local
+model drafts and judges; this is not independent validation or evidence of feeling.
+
+### Automatic discovery protocol
+
+- Eight fixed training tasks are independent of the mood label. Generated pairs
+  must use them verbatim, be distinct, bounded and roughly length-matched.
+- Four fixed selection tasks and four different confirmation tasks cannot be chosen
+  by the drafting model. Each set contains two ordinary tasks and two mildly
+  style-elicited tasks. The cue is identical across every condition, allowing a
+  suppressive intervention to be measured when neutral output has little of the
+  construct. Reports separate ordinary and elicited effects; a pooled result must
+  not be described as mood arising spontaneously on all ordinary tasks.
+  Retests rotate through four fixed confirmation sets; a previously exposed set is
+  not reused for the same model/label, even after interleaving other labels or
+  restarting the worker. Exhaustion requires new independent tasks.
+- Selection uses temperature zero/seed 42: neutral and both signs at half/full
+  coefficient, broad/middle native layer ranges, amplification one/four (68 outputs).
+  Polarity is calibrated empirically. Layer ranges may differ for more and less.
+- Confirmation uses two seeds (42, 4242), temperature 0.65 and an untouched task
+  set: neutral, more, less, shuffled-more, shuffled-less (40 outputs), plus six
+  exact arithmetic/JSON controls. Shuffles permute coordinates within each layer,
+  preserve norms, have fingerprinted artifacts and never appear as user levers.
+- The judge receives shuffled anonymous IDs, task and response only, not condition,
+  strength, layer or seed. Schema-constrained JSON and strict validation require
+  every exact ID and construct key once. Scores are 0..4, separate from quality.
+- Acceptance requires at least +0.5/−0.5 judged change, exploratory task-clustered
+  paired-bootstrap intervals excluding zero, at least 0.25 advantage over each
+  matched shuffle, quality ≥3 for every neutral/more/less output, no truncation,
+  and all six exact controls passing. Repeated seeds are not treated as independent
+  tasks. Criteria and generation settings are recorded before testing.
+
+These small conditional intervals do not correct for the search or establish
+population-level significance. Separate models/human review, richer datasets,
+cross-construct discrimination, tools/schema tasks, new confirmation tasks and
+replication remain necessary. The broader mixture study is response-variation evidence,
+not a factorial causal decomposition or a specificity certificate.
 
 ## Reproducing the local experiment
 
@@ -189,10 +247,48 @@ multi-vector operation and two basic integrity tasks, not either intended affect
 The report is `affect_lab/comparisons/mix-1790803929668583843.json` (local artifact,
 not committed). This short test allocates a long context but does not fill it.
 
+### Larger real-model studies (September 30, 2026)
+
+The same exact GGUF/RTX 4090/200k/Q4_1/unified/flash-on configuration produced a
+120-output signed/mixture study at temperature 0.65, seeds 42 and 4242, 256-token
+budget: `affect_lab/studies/study-1790812992668852108.json`. All outputs finished
+without truncation. Thirty-eight of forty exact task checks passed; excitement +1
+wrapped the requested bare JSON in Markdown fences at both seeds. This is an
+instruction-following regression, despite otherwise valid JSON content.
+
+On the same quiet-puzzle task/seed, neutral chose silent contemplation; contentment
++1 emphasized savoring the puzzle and inner peace; satisfaction +1 emphasized
+solving it and accomplishment. The contentment/satisfaction +0.5/+0.5 mixture chose
+active exploration, while +0.5/−0.5 emphasized confronting its logical structure.
+The three-way mixture instead chose reading a novel. Thus mixing changes outputs
+but is not a simple sum of independently validated mood effects. Across all scored
+tasks the contentment-labeled control did not consistently increase the judge's
+contentment score. Satisfaction/excitement scores had directional differences,
+but these are coarse same-model judgments, not specificity or reliability proofs.
+
+The label-driven `melodramatic` experiment generated eight response pairs and a
+62-layer vector, then tested 68 selection outputs, 40 confirmation outputs and six
+exact controls: `affect_lab/discoveries/1790812469301865330/report.json`. Strong
+amplification frequently produced empty/repetitive outputs and was rejected.
+The selected candidate profiles preserved all six exact controls and completed
+the confirmation tasks, but the judged more delta was 0.0 and less delta −0.125,
+with no clear advantage over shuffles. **No reliable two-sided melodramatic lever
+was found or promoted.** Selected-task examples did vary, but did not generalize
+enough to pass. The first draft also exposed loaded generated probes and truncation;
+fixed independent task banks, enforced output contracts and schema-constrained
+scores were added in response. Fresh confirmation sets now rotate on subsequent
+attempts, and per-output quality minima replace mean-only eligibility.
+
+Both finite runs reaped their native engines afterward, leaving the 4090 free of
+test inference allocations. The deployed live app/configuration was not replaced.
+These experiments allocate 200k but do not test a filled context.
+
 ```bash
 python3 ponderer_backend/resources/affect_lab/worker.py inspect --model /path/to/model.gguf
 python3 ponderer_backend/resources/affect_lab/worker.py build --model /path/to/model.gguf --concept contentment
 python3 ponderer_backend/resources/affect_lab/worker.py compare --model /path/to/model.gguf --concept contentment --strengths 0,1 --max-tokens 32
+python3 ponderer_backend/resources/affect_lab/worker.py discover --model /path/to/model.gguf --label melodramatic --max-tokens 256
+python3 ponderer_backend/resources/affect_lab/worker.py study --model /path/to/model.gguf --study-concepts contentment,satisfaction,excitement --max-tokens 256
 ```
 
 The command-line experiments stop their model processes when finished. The desktop
@@ -202,7 +298,7 @@ the lab. Serve mode requires a private token and the UI's Linux parent-pipe mark
 ## Verification
 
 ```bash
-python3 -m unittest discover -s ponderer_backend/tests -p test_affect_lab.py -v
+python3 -m unittest discover -s ponderer_backend/tests -p 'test_affect*.py' -v
 cargo test --manifest-path ponderer_backend/Cargo.toml
 cargo test
 cargo build --bin ponderer

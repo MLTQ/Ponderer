@@ -55,12 +55,21 @@ def main():
         shutil.copy2(binary, executable)
         model = directory / "fixture.gguf"
         helpers.make_gguf(model)
+        vector_dir = directory / "lab/vectors/contentment-test"
+        vector_dir.mkdir(parents=True)
+        vector = vector_dir / "vector.gguf"
+        helpers.make_gguf(vector, vector=True)
+        (vector_dir / "manifest.json").write_text(json.dumps({
+            "concept": "contentment", "created_at": time.time(), "model_path": str(model),
+            "model_identity": helpers.worker.quick_identity(model), "model_sha256": helpers.worker.sha256_file(model),
+            "recipe_sha256": "fixture", "vector_sha256": helpers.worker.sha256_file(vector)}))
         fake = directory / "fake-server"
         fake.write_text(f"#!/bin/sh\nexec {sys.executable} {TEST_HELPER} --fake-server \"$@\"\n")
         fake.chmod(0o700)
         config_path = directory / "ponderer_config.toml"
         config_path.write_text('llm_api_url = "http://127.0.0.1:1/v1"\nllm_model = "original-model"\nusername = "LifecycleTest"\nenable_ambient_loop = false\nenable_self_reflection = false\nenable_screen_capture_in_loop = false\nloose_mode = false\npoll_interval_secs = 86400\ndatabase_path = "fixture.db"\n')
         env = dict(os.environ, PONDERER_BACKEND_BIND="", PONDERER_BACKEND_AUTH_MODE="required", PONDERER_BACKEND_TOKEN="lifecycle-test-token", PONDERER_BACKEND_PARENT_PIPE="1", PONDERER_AFFECT_DATA_DIR=str(directory / "lab"))
+        env["PONDERER_AFFECT_TEST_DELAY"] = "0.15"
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
@@ -86,6 +95,8 @@ def main():
                 assert state["inference_settings"]["unified_kv_cache"]
                 assert state["inference_settings"]["flash_attention"] == "on"
                 assert "example_library" in state
+                assert state["capabilities"]["automatic_discovery"]
+                assert state["capabilities"]["signed_controls"]
                 assert len(state["test_prompts"]) == 5
                 request(base, "/affect-lab/load", {})
                 deadline = time.monotonic() + 10
@@ -121,6 +132,17 @@ def main():
                 time.sleep(0.2)
                 state = request(base, "/affect-lab")
                 assert state["native_pid"] == loaded_pid, "Engine died when its HTTP request thread exited"
+                request(base, "/affect-lab/profile", {"strengths": {"contentment": -0.25}, "gain": 4})
+                state = request(base, "/affect-lab/study", {"concepts": ["contentment"], "max_tokens": 64})
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    state = request(base, "/affect-lab")
+                    if state["job"]["phase"] == "running" and state["native_pid"] and state["last_study"]:
+                        break
+                    time.sleep(0.02)
+                assert state["job"]["phase"] == "running" and state["native_pid"], "Expected an active model-owned response-study job"
+                assert state["requested_profile"]["strengths"]["contentment"] == -0.25, "Study changed the agent's signed mix"
+                assert state["requested_profile"]["gain"] == 4
                 pids = [backend.pid, state["worker_pid"], state["native_pid"]]
                 pids.extend(descendants(state["native_pid"]))
                 assert len(set(pids)) >= 4, "Expected backend, worker, native supervisor and inference process"
@@ -130,7 +152,7 @@ def main():
                 while time.monotonic() < deadline and not all(helpers.inactive(pid) for pid in pids):
                     time.sleep(0.05)
                 assert all(helpers.inactive(pid) for pid in pids), "A model process survived UI-parent pipe closure"
-                print("PASS: explicit load persists across jobs/requests, session provider, durable-config isolation, and UI-close termination of the complete inference chain")
+                print("PASS: explicit load persists across jobs/requests, session provider/config isolation, signed study preserves the mix, and UI closure terminates an active study and the complete inference chain")
             finally:
                 if backend.poll() is None:
                     backend.kill()

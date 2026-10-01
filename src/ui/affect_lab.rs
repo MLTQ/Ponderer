@@ -18,6 +18,7 @@ struct LabReply {
 }
 #[derive(Clone, Default)]
 struct ExamplePair {
+    prompt: Option<String>,
     target: String,
     control: String,
 }
@@ -39,6 +40,7 @@ pub struct AffectLabPanel {
     strengths: BTreeMap<String, f64>,
     layer_start: i64,
     layer_end: i64,
+    gain: f64,
     dirty: bool,
     mix_version: u64,
     failed_mix: Option<u64>,
@@ -47,6 +49,10 @@ pub struct AffectLabPanel {
     concept: String,
     examples: BTreeMap<String, Vec<ExamplePair>>,
     custom_name: String,
+    discovery_label: String,
+    discovery_definition: String,
+    experiment_tokens: u32,
+    study_concepts: Vec<String>,
     test_prompts: Vec<String>,
     test_tokens: u32,
     review_id: String,
@@ -83,6 +89,7 @@ impl AffectLabPanel {
             strengths: BTreeMap::new(),
             layer_start: 1,
             layer_end: 1,
+            gain: 1.0,
             dirty: false,
             mix_version: 0,
             failed_mix: None,
@@ -91,6 +98,14 @@ impl AffectLabPanel {
             concept: "contentment".into(),
             examples: BTreeMap::new(),
             custom_name: String::new(),
+            discovery_label: "melodramatic".into(),
+            discovery_definition: String::new(),
+            experiment_tokens: 256,
+            study_concepts: vec![
+                "contentment".into(),
+                "satisfaction".into(),
+                "excitement".into(),
+            ],
             test_prompts: Vec::new(),
             test_tokens: 96,
             review_id: String::new(),
@@ -169,6 +184,7 @@ impl AffectLabPanel {
                     .unwrap_or_default();
                 self.layer_start = profile["layer_start"].as_i64().unwrap_or(1);
                 self.layer_end = profile["layer_end"].as_i64().unwrap_or(1);
+                self.gain = profile["gain"].as_f64().unwrap_or(1.0);
             }
         }
         if let Some(library) = value["example_library"].as_array() {
@@ -182,6 +198,7 @@ impl AffectLabPanel {
                                     .iter()
                                     .filter_map(|p| {
                                         Some(ExamplePair {
+                                            prompt: p["prompt"].as_str().map(str::to_owned),
                                             target: p["target"].as_str()?.into(),
                                             control: p["control"].as_str()?.into(),
                                         })
@@ -305,10 +322,10 @@ impl AffectLabPanel {
         )
     }
     fn total(&self) -> f64 {
-        self.strengths.values().sum()
+        self.strengths.values().map(|s| s.abs()).sum()
     }
     fn profile(&self) -> Value {
-        json!({"strengths": self.strengths.iter().filter(|(_, s)| **s > 0.0).collect::<BTreeMap<_, _>>(), "layer_start": self.layer_start, "layer_end": self.layer_end})
+        json!({"strengths": self.strengths.iter().filter(|(_, s)| **s != 0.0).collect::<BTreeMap<_, _>>(), "layer_start": self.layer_start, "layer_end": self.layer_end, "gain": self.gain})
     }
     fn edited(&mut self) {
         self.dirty = true;
@@ -580,12 +597,12 @@ impl AffectLabPanel {
                 return;
             }
             ui.horizontal_wrapped(|ui| {
-                for (i, label) in ["Affect mixer", "Example library", "Test & evidence"].iter().enumerate() { ui.selectable_value(&mut self.tab, i, *label); }
+                for (i, label) in ["Affect mixer", "Example library", "Test & evidence", "Discover lever"].iter().enumerate() { ui.selectable_value(&mut self.tab, i, *label); }
                 if ui.button("Model settings").clicked() { self.open_settings = true; self.local_view = true; }
             });
             self.activity(ui, client, runtime); ui.separator();
             egui::ScrollArea::vertical().id_salt("affect_lab_content").show(ui, |ui| match self.tab {
-                0 => self.mixer(ui), 1 => self.library(ui, client, runtime), _ => self.evidence(ui, client, runtime),
+                0 => self.mixer(ui), 1 => self.library(ui, client, runtime), 2 => self.evidence(ui, client, runtime), _ => self.discovery(ui, client, runtime),
             });
         });
         self.show = open;
@@ -607,14 +624,14 @@ impl AffectLabPanel {
                 .iter()
                 .any(|v| v["concept"].as_str() == Some(&concept));
             let mut value = self.strengths.get(&concept).copied().unwrap_or(0.0);
-            let remaining = (1.0 - self.total() + value).clamp(0.0, 1.0);
+            let remaining = (1.0 - self.total() + value.abs()).clamp(0.0, 1.0);
             let slot_available =
-                value > 0.0 || self.strengths.values().filter(|s| **s > 0.0).count() < 8;
+                value != 0.0 || self.strengths.values().filter(|s| **s != 0.0).count() < 8;
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
                         built && slot_available,
-                        egui::Slider::new(&mut value, 0.0..=remaining)
+                        egui::Slider::new(&mut value, -remaining..=remaining)
                             .text(&concept)
                             .fixed_decimals(2),
                     )
@@ -638,10 +655,11 @@ impl AffectLabPanel {
             });
         }
         ui.label(format!("Combined intervention: {:.2} / 1.00", self.total()));
-        ui.small("Each slider is capped by the remaining shared budget. This bound is not a percentage of an emotion; equal strengths need not have equal effects.");
+        ui.small("Signed native multipliers, not measured mood levels. Positive/negative polarity must be tested; zero = neutral. Absolute strengths share a budget of one: opposite signs cannot cancel it. Equal strengths need not have equal effects.");
         ui.horizontal_wrapped(|ui| {
             if ui.button("Neutral / reset all").clicked() {
                 self.strengths.clear();
+                self.gain = 1.0;
                 // Reset must remain possible even after invalid draft layer edits.
                 self.layer_start = self.status["requested_profile"]["layer_start"]
                     .as_i64()
@@ -677,6 +695,8 @@ impl AffectLabPanel {
             ui.colored_label(egui::Color32::YELLOW, "The agent still uses its API. This mix affects lab tests only until you select the local provider in Settings.");
         }
         ui.collapsing("Advanced: layer range", |ui| {
+            if ui.add(egui::Slider::new(&mut self.gain, 1.0..=4.0).text("Experimental amplification")).changed() { self.edited(); }
+            ui.small("Amplification multiplies the entire mix; default 1, hard limit 4. Larger interventions can distort tasks. Retest before using them for agent inference.");
             let max = self.status["steerable_layer_end"].as_i64().unwrap_or(1);
             ui.horizontal(|ui| {
                 ui.label("Layers"); let a = ui.add(egui::DragValue::new(&mut self.layer_start).range(1..=max)).changed();
@@ -724,6 +744,7 @@ impl AffectLabPanel {
                             .iter()
                             .filter_map(|p| {
                                 Some(ExamplePair {
+                                    prompt: p["prompt"].as_str().map(str::to_owned),
                                     target: p["target"].as_str()?.into(),
                                     control: p["control"].as_str()?.into(),
                                 })
@@ -767,6 +788,15 @@ impl AffectLabPanel {
                             }
                         });
                         ui.label("Target state");
+                        if let Some(prompt) = &mut pair.prompt {
+                            ui.label("Shared user task (same in both conditions)");
+                            ui.add(
+                                egui::TextEdit::multiline(prompt)
+                                    .char_limit(512)
+                                    .desired_rows(2)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        }
                         ui.add(
                             egui::TextEdit::multiline(&mut pair.target)
                                 .char_limit(512)
@@ -805,6 +835,9 @@ impl AffectLabPanel {
                     && p.target != p.control
                     && !p.target.contains('\0')
                     && !p.control.contains('\0')
+                    && p.prompt
+                        .as_ref()
+                        .is_none_or(|task| !task.trim().is_empty() && !task.contains('\0'))
             });
         let built = self.status["vectors"].as_array().is_some_and(|v| {
             v.iter()
@@ -824,7 +857,7 @@ impl AffectLabPanel {
         {
             let values: Vec<Value> = pairs
                 .iter()
-                .map(|p| json!({"target": p.target, "control": p.control}))
+                .map(|p| json!({"prompt": p.prompt, "target": p.target, "control": p.control}))
                 .collect();
             self.request(
                 client,
@@ -843,6 +876,232 @@ impl AffectLabPanel {
         }
     }
 
+    fn discovery(
+        &mut self,
+        ui: &mut egui::Ui,
+        client: &ApiClient,
+        runtime: &tokio::runtime::Runtime,
+    ) {
+        ui.heading("Find a more / less lever from a label");
+        ui.small("The neutral local model defines the construct, generates eight matched response pairs, derives a vector, searches two layer ranges and both signs, and confirms on new tasks with two seeds and matched shuffled controls. It does not change your agent mix. This can take several minutes and waits for current inference.");
+        ui.horizontal(|ui| {
+            ui.label("Mood or style");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.discovery_label)
+                    .char_limit(80)
+                    .hint_text("melodramatic, curious, serene…"),
+            );
+        });
+        ui.add(
+            egui::TextEdit::multiline(&mut self.discovery_definition)
+                .char_limit(1000)
+                .desired_rows(2)
+                .desired_width(f32::INFINITY)
+                .hint_text("Optional: what observable behavior do you mean by this word?"),
+        );
+        ui.add(
+            egui::Slider::new(&mut self.experiment_tokens, 64..=256).text("Tokens per test output"),
+        );
+        ui.small("Probe tasks are fixed independently of the label. Half are ordinary; half share a mild style cue across every condition so suppression can be measured without a floor effect. Native vector polarity is calibrated, not assumed.");
+        if ui
+            .add_enabled(
+                self.available() && !self.discovery_label.trim().is_empty(),
+                egui::Button::new("Discover and test signed lever"),
+            )
+            .clicked()
+        {
+            self.request(client, runtime, "discover", json!({"label": self.discovery_label.trim(), "definition": self.discovery_definition, "max_tokens": self.experiment_tokens}));
+        }
+        let report = self.status["last_discovery"].clone();
+        if report["label"].as_str() == Some(self.discovery_label.trim())
+            && report["current_artifacts"].as_bool().unwrap_or(false)
+            && !report["plan"].is_null()
+            && ui
+                .add_enabled(
+                    self.available(),
+                    egui::Button::new("Retest this exact vector (no rebuild)"),
+                )
+                .clicked()
+        {
+            self.request(client, runtime, "discover", json!({"label": self.discovery_label.trim(), "reuse_concept": report["concept"], "max_tokens": self.experiment_tokens}));
+        }
+        if report.is_null() {
+            return;
+        }
+        ui.separator();
+        ui.label(format!(
+            "{} · {} · control {}",
+            report["label"].as_str().unwrap_or(""),
+            report["phase"].as_str().unwrap_or(""),
+            report["concept"].as_str().unwrap_or("")
+        ));
+        if let Some(definition) = report["plan"]["definition"].as_str() {
+            ui.label(definition);
+        }
+        if let Some(opposite) = report["plan"]["opposite"].as_str() {
+            ui.small(format!("Low end: {opposite}"));
+        }
+        if let Some(criteria) = report["plan"]["rubric"].as_array() {
+            for criterion in criteria {
+                ui.small(format!("• {}", criterion.as_str().unwrap_or("")));
+            }
+        }
+        if report["lever_found"].as_bool().unwrap_or(false) {
+            ui.colored_label(egui::Color32::LIGHT_GREEN, "Both directions passed this exploratory model-judged confirmation. Not independent validation.");
+            let current = report["current_artifacts"].as_bool().unwrap_or(false)
+                && report["current_inference_settings"]
+                    .as_bool()
+                    .unwrap_or(false);
+            if !current {
+                ui.colored_label(egui::Color32::YELLOW, "Historical evidence: vectors or inference settings changed. Rerun before adopting these settings.");
+            }
+            ui.horizontal(|ui| {
+                for (key, title) in [
+                    ("less", "Use tested less setting"),
+                    ("more", "Use tested more setting"),
+                ] {
+                    if ui
+                        .add_enabled(self.available() && current, egui::Button::new(title))
+                        .clicked()
+                    {
+                        let profile = &report["recommendations"][key];
+                        self.strengths = profile["strengths"]
+                            .as_object()
+                            .map(|values| {
+                                values
+                                    .iter()
+                                    .filter_map(|(k, v)| v.as_f64().map(|v| (k.clone(), v)))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        self.layer_start = profile["layer_start"].as_i64().unwrap_or(1);
+                        self.layer_end = profile["layer_end"].as_i64().unwrap_or(1);
+                        self.gain = profile["gain"].as_f64().unwrap_or(1.0);
+                        self.edited();
+                        self.tab = 0;
+                    }
+                }
+            });
+        } else if report["phase"] == "complete" {
+            ui.colored_label(egui::Color32::YELLOW, "No reliable two-sided lever passed the confirmation criteria. The derived vector remains experimental.");
+        }
+        if let Some(reasons) = report["failure_reasons"].as_array() {
+            for reason in reasons {
+                ui.label(reason.as_str().unwrap_or(""));
+            }
+        }
+        if let Some(error) = report["error"].as_str() {
+            ui.colored_label(egui::Color32::LIGHT_RED, error);
+        }
+        ui.collapsing("More / less effects vs neutral and placebo", |ui| {
+            ui.small("Scores are 0–4 rubric judgments of observable output. Paired bootstrap intervals are exploratory and conditional on the chosen settings and this judge.");
+            if let Some(effects) = report["effects"].as_object() {
+                for (condition, effect) in effects { ui.label(format!("{condition}: Δ {} · interval {} · {} paired outputs", effect["mean_delta"], effect["bootstrap_95"], effect["pairs"])); }
+            }
+            if let Some(strata) = report["strata"].as_object() {
+                for (stratum, effects) in strata {
+                    ui.small(format!("{stratum} tasks: more Δ {} · less Δ {}", effects["more"]["mean_delta"], effects["less"]["mean_delta"]));
+                }
+            }
+            if let Some(summary) = report["confirmation_summary"].as_object() { evidence_summary(ui, summary); }
+        });
+        ui.collapsing("Selection search — settings and actual outputs", |ui| {
+            if let Some(summary) = report["selection_summary"].as_object() {
+                evidence_summary(ui, summary);
+            }
+            output_gallery(ui, &report["selection"], "discovery_selection");
+        });
+        ui.collapsing("Untouched confirmation tasks — actual outputs", |ui| {
+            output_gallery(ui, &report["confirmation"], "discovery_confirmation");
+        });
+        ui.collapsing("Accuracy / format outputs", |ui| {
+            output_gallery(ui, &report["integrity_controls"], "discovery_integrity");
+        });
+        ui.small("The same local model creates examples and judges outputs, although judging runs neutral and hides conditions. Independent human/other-model review is still necessary. A failed discovery is reported as failed, not relabeled a success.");
+        if let Some(path) = report["path"].as_str() {
+            ui.small(format!(
+                "Reproducible report, prompts and fingerprints: {path}"
+            ));
+            if ui.small_button("Copy discovery report path").clicked() {
+                ui.ctx().copy_text(path.into());
+            }
+        }
+    }
+
+    fn response_study(
+        &mut self,
+        ui: &mut egui::Ui,
+        client: &ApiClient,
+        runtime: &tokio::runtime::Runtime,
+    ) {
+        ui.heading("Explore individual controls and combinations");
+        ui.small("Pick up to four built controls. Test their positive/negative directions and combinations on six tasks with two seeds, including accuracy/format checks. The neutral model judges shuffled anonymous outputs; raw responses and quality failures remain visible. This is a larger study, not a smoke test.");
+        ui.add(
+            egui::Slider::new(&mut self.experiment_tokens, 64..=256).text("Tokens per test output"),
+        );
+        let built: Vec<String> = self.status["vectors"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v["concept"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let selected: Vec<_> = self
+            .study_concepts
+            .iter()
+            .filter(|c| built.contains(c))
+            .cloned()
+            .collect();
+        ui.horizontal_wrapped(|ui| {
+            for name in &built {
+                let mut on = self.study_concepts.contains(name);
+                if ui
+                    .add_enabled(on || selected.len() < 4, egui::Checkbox::new(&mut on, name))
+                    .changed()
+                {
+                    if on {
+                        self.study_concepts.push(name.clone());
+                    } else {
+                        self.study_concepts.retain(|c| c != name);
+                    }
+                }
+            }
+        });
+        if ui
+            .add_enabled(
+                self.available() && !selected.is_empty(),
+                egui::Button::new("Run signed-control and mixture study"),
+            )
+            .clicked()
+        {
+            self.request(
+                client,
+                runtime,
+                "study",
+                json!({"concepts": selected, "max_tokens": self.experiment_tokens}),
+            );
+        }
+        let report = self.status["last_study"].clone();
+        if !report.is_null() {
+            ui.label(format!(
+                "Last study: {}",
+                report["phase"].as_str().unwrap_or("")
+            ));
+            if let Some(summary) = report["summary"].as_object() {
+                evidence_summary(ui, summary);
+            }
+            output_gallery(ui, &report["records"], "response_study");
+            if let Some(error) = report["error"].as_str() {
+                ui.colored_label(egui::Color32::LIGHT_RED, error);
+            }
+            if let Some(path) = report["path"].as_str() {
+                ui.small(format!("Raw study report: {path}"));
+            }
+        }
+    }
+
     fn evidence(
         &mut self,
         ui: &mut egui::Ui,
@@ -852,6 +1111,9 @@ impl AffectLabPanel {
         ui.heading("Does the mix do what you intend?");
         ui.small("Compare your slider mix with neutral and half strength on identical held-out prompts: temperature 0, seed 42, fresh cache for each condition. Your agent mix is preserved. Tests run serially, may reload weights three times, and wait for active inference.");
         ui.label(format!("Mix to test: {}", self.profile()));
+        ui.collapsing("Larger response-variation study", |ui| {
+            self.response_study(ui, client, runtime);
+        });
         ui.collapsing("Review / edit held-out prompts", |ui| {
             for (i, prompt) in self.test_prompts.iter_mut().enumerate() { ui.push_id(i, |ui| {
                 ui.label(format!("Prompt {}", i + 1)); ui.add(egui::TextEdit::multiline(prompt).char_limit(2000).desired_rows(2).desired_width(f32::INFINITY));
@@ -984,6 +1246,74 @@ impl AffectLabPanel {
     }
 }
 
+fn evidence_summary(ui: &mut egui::Ui, summary: &serde_json::Map<String, Value>) {
+    egui::Grid::new(ui.id().with("evidence_summary"))
+        .striped(true)
+        .show(ui, |ui| {
+            ui.strong("Condition");
+            ui.strong("Construct scores / 4");
+            ui.strong("Quality / 4");
+            ui.strong("Checks · cut off");
+            ui.end_row();
+            for (condition, values) in summary {
+                ui.label(condition);
+                ui.label(values["affects"].to_string());
+                ui.label(values["quality"].to_string());
+                ui.label(format!(
+                    "{}/{} · {}",
+                    values["checks_passed"], values["checks_total"], values["truncated"]
+                ));
+                ui.end_row();
+            }
+        });
+}
+
+fn output_gallery(ui: &mut egui::Ui, records: &Value, salt: &str) {
+    let Some(records) = records.as_array() else {
+        return;
+    };
+    ui.push_id(salt, |ui| {
+        for baseline in records.iter().filter(|r| r["condition"] == "neutral") {
+            let title = format!(
+                "Seed {} · {}",
+                baseline["seed"],
+                baseline["prompt"].as_str().unwrap_or("")
+            );
+            ui.collapsing(title, |ui| {
+                for record in records.iter().filter(|r| {
+                    r["prompt_index"] == baseline["prompt_index"] && r["seed"] == baseline["seed"]
+                }) {
+                    ui.group(|ui| {
+                        ui.label(
+                            egui::RichText::new(record["condition"].as_str().unwrap_or(""))
+                                .strong(),
+                        );
+                        ui.small(format!(
+                            "{} · {} · scores {} · {} seconds",
+                            record["profile"],
+                            record["finish_reason"],
+                            record["scores"],
+                            record["seconds"]
+                        ));
+                        if let Some(pass) = record["integrity_pass"].as_bool() {
+                            ui.label(if pass {
+                                "Exact task check passed"
+                            } else {
+                                "EXACT TASK CHECK FAILED"
+                            });
+                        }
+                        ui.add(
+                            egui::Label::new(record["content"].as_str().unwrap_or(""))
+                                .selectable(true)
+                                .wrap(),
+                        );
+                    });
+                }
+            });
+        }
+    });
+}
+
 fn read_strings(value: &Value) -> Vec<String> {
     value
         .as_array()
@@ -1017,7 +1347,7 @@ fn review_choice(ui: &mut egui::Ui, label: &str, value: &mut String) {
 fn validation_help(ui: &mut egui::Ui) {
     ui.collapsing("How to establish that an affect control is useful", |ui| {
         ui.label("1. Use varied, reviewed matched situations, separate from evaluation.\n2. Seek the intended behavior on unseen tasks at several strengths without losing accuracy or format.\n3. Test controls alone before mixing; mixtures can interact.\n4. Repeat with new examples, layers and tasks. Compare shuffled/placebo directions in a separate calibration study.");
-        ui.small("No placebo/shuffle controls, confidence intervals or blinded repeated-seed evaluations yet. A favorable assessment is your judgment on this report, not a validated state vector or proof of experience.");
+        ui.small("Discover lever adds matched shuffled-vector controls, anonymous neutral judging, two confirmation seeds and task-clustered exploratory intervals. The larger mixture study measures response variation, not isolated causal specificity. Human/independent-model review is still needed; none of these tests establish subjective experience.");
     });
 }
 
@@ -1103,11 +1433,34 @@ mod tests {
         assert!(!p.mix_due());
     }
     #[test]
+    fn signed_mix_retains_negative_values_and_uses_absolute_budget() {
+        let mut p = AffectLabPanel::new();
+        p.accept_status(json!({"running": true, "requested_profile": {"strengths": {"contentment": -0.4, "excitement": 0.6}, "layer_start": 1, "layer_end": 2}}));
+        assert_eq!(p.total(), 1.0);
+        assert_eq!(p.profile()["strengths"]["contentment"], -0.4);
+        p.edited();
+        p.last_edit -= Duration::from_secs(1);
+        assert!(p.mix_due());
+        p.strengths.insert("contentment".into(), -0.6);
+        assert!(!p.mix_due());
+    }
+    #[test]
+    fn shared_example_tasks_survive_status_parsing() {
+        let mut p = AffectLabPanel::new();
+        p.accept_status(json!({"example_library": [{"concept": "melodramatic", "pairs": [{"prompt": "Tiny inconvenience", "target": "Grand tragedy", "control": "Small adjustment"}]}]}));
+        assert_eq!(
+            p.examples["melodramatic"][0].prompt.as_deref(),
+            Some("Tiny inconvenience")
+        );
+        assert_eq!(p.experiment_tokens, 256);
+    }
+    #[test]
     fn polling_preserves_example_drafts() {
         let mut p = AffectLabPanel::new();
         p.examples.insert(
             "contentment".into(),
             vec![ExamplePair {
+                prompt: None,
                 target: "edited".into(),
                 control: "control".into(),
             }],
@@ -1157,7 +1510,8 @@ mod tests {
         let ctx = egui::Context::default();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let client = ApiClient::new("http://127.0.0.1:1".into(), None);
-        for tab in 0..3 {
+        p.status["last_discovery"] = json!({"label": "melodramatic", "concept": "melodramatic", "phase": "complete", "lever_found": false, "plan": {"definition": "Theatrical expression", "opposite": "Measured", "rubric": ["Imagery"]}, "failure_reasons": ["No reliable effect"]});
+        for tab in 0..4 {
             p.tab = tab;
             let output = ctx.run(egui::RawInput::default(), |ctx| {
                 p.render(ctx, &client, &runtime)
