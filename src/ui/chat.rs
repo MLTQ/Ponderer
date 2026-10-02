@@ -442,6 +442,7 @@ fn render_single_event(
         FrontendEvent::StateChanged(_)
         | FrontendEvent::ChatStreaming { .. }
         | FrontendEvent::GenerationStarted { .. }
+        | FrontendEvent::GenerationText { .. }
         | FrontendEvent::GenerationMetrics { .. }
         | FrontendEvent::GenerationFinished { .. }
         | FrontendEvent::ApprovalRequest { .. }

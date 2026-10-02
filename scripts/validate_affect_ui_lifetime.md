@@ -1,5 +1,8 @@
 # validate_affect_ui_lifetime.py
 
+The session-selection regression rejects an unloaded native engine with HTTP 400
+and verifies that the original provider remains selected until a successful load.
+
 Runs a compiled desktop binary's backend-only mode in a temporary isolated
 directory with fixture GGUF/vector files and a fake inference server. It does not
 read or modify user configuration, load real model weights or contact Telegram.

@@ -176,6 +176,13 @@ pub enum FrontendEvent {
         source: String,
         conversation_id: Option<String>,
     },
+    GenerationText {
+        generation_id: String,
+        source: String,
+        conversation_id: Option<String>,
+        channel: String,
+        text: String,
+    },
     GenerationMetrics {
         generation_id: String,
         source: String,
@@ -840,6 +847,13 @@ fn map_event(envelope: ApiEventEnvelope) -> Option<FrontendEvent> {
             source: string_field(&envelope.payload, "source"),
             conversation_id: optional_string_field(&envelope.payload, "conversation_id"),
         }),
+        "generation_text" => Some(FrontendEvent::GenerationText {
+            generation_id: string_field(&envelope.payload, "generation_id"),
+            source: string_field(&envelope.payload, "source"),
+            conversation_id: optional_string_field(&envelope.payload, "conversation_id"),
+            channel: string_field(&envelope.payload, "channel"),
+            text: string_field(&envelope.payload, "text"),
+        }),
         "generation_metrics" => Some(FrontendEvent::GenerationMetrics {
             generation_id: string_field(&envelope.payload, "generation_id"),
             source: string_field(&envelope.payload, "source"),
@@ -1054,6 +1068,22 @@ mod tests {
 
         let mapped = map_event(envelope);
         assert!(matches!(mapped, Some(FrontendEvent::StateChanged(_))));
+    }
+
+    #[test]
+    fn raw_generation_output_preserves_whitespace_channel_and_identity() {
+        let event = map_event(ApiEventEnvelope {
+            event_type: "generation_text".into(),
+            payload: serde_json::json!({
+                "generation_id":"g", "source":"dream", "conversation_id":null,
+                "channel":"reasoning_content", "text":"  灯\n\t"
+            }),
+        })
+        .unwrap();
+        assert!(
+            matches!(event, FrontendEvent::GenerationText { generation_id, source, conversation_id: None, channel, text }
+            if generation_id == "g" && source == "dream" && channel == "reasoning_content" && text == "  灯\n\t")
+        );
     }
 
     #[test]

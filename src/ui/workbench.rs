@@ -1,7 +1,7 @@
 //! Native egui workspaces. The instrument rail is independent of navigation and approvals.
 use super::{
-    conversation_display_label, format_elapsed, last_n_chars, render_live_tool_entry, AgentApp,
-    LiveToolProgress, Workspace,
+    conversation_display_label, format_elapsed, render_live_tool_entry, AgentApp, LiveToolProgress,
+    Workspace,
 };
 use crate::api::AgentVisualState;
 use crate::ui::{chat, theme, token_monitor};
@@ -43,7 +43,7 @@ impl AgentApp {
             let colors = theme::palette(ui);
             ui.horizontal_wrapped(|ui| {
                 crate::ui::sprite::render_agent_sprite(ui, &self.current_state, self.avatars.as_mut());
-                ui.label(RichText::new(self.settings_panel.config.username.to_uppercase()).monospace().size(16.0));
+                ui.label(RichText::new(self.settings_panel.config.character_display_name().to_uppercase()).monospace().size(16.0));
                 ui.separator();
                 if self.ui_snapshot {ui.small("Isolated snapshot · synthetic data");}
                 ui.monospace(format!("{:?}", self.current_state));
@@ -197,10 +197,7 @@ impl AgentApp {
                     if let Some(journal) = &self.last_journal {ui.add(egui::Label::new(journal).wrap());} else {ui.weak("No journal entry received in this session.");}
                     if let Some(action) = &self.last_action {ui.separator();label(ui,"Last action");ui.add(egui::Label::new(action).wrap());}
                     egui::CollapsingHeader::new("Raw stream").show(ui, |ui| {
-                        egui::ScrollArea::vertical().max_height(160.0).id_salt("live_stream_scroll").stick_to_bottom(true).show(ui, |ui| {
-                            if let Some(text) = &self.live_stream_text {ui.add(egui::Label::new(RichText::new(last_n_chars(text,1200)).monospace().small()).wrap());}
-                            else {ui.weak("No stream received.");}
-                        });
+                        self.raw_feed.render(ui);
                     });
                 });
             });

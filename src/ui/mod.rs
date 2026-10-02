@@ -4,6 +4,7 @@ pub mod avatar;
 pub mod character;
 pub mod chat;
 pub mod plugin_settings_form;
+pub mod raw_feed;
 pub mod settings;
 pub mod sprite;
 pub mod theme;

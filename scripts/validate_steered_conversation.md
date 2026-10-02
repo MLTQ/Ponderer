@@ -5,19 +5,30 @@ agentic conversation executor used by the desktop. Supply the built desktop
 binary, model, native engine device ID and a lab directory containing existing
 checkpoint-matched contentment/excitement vectors. All inputs are read-only;
 configuration, chats, handoffs and copied vectors live in a temporary directory.
-No external tools, Telegram, ambient cognition or services run.
+No external tools, Telegram or services run. Only fixture memory tools may write
+to the temporary database. `--ambient` enables background cognition throughout
+the regression without enabling its effectful tools.
 
 The default is Direct mode for interactive conversations, with normal gain one.
 `--mode agentic` exercises richer task context and continuations; `--gain 4`
 opts into the strongest amplification rather than silently changing the UI
 default. Both modes support actual tool execution and handoff finalization.
+The regression also checks the originally failing `test` / `How do you feel?`
+exchange, character/operator-name recall, the exact role-bearing wire prompt,
+and raw output delivered through the real authenticated WebSocket. Background
+and structured tool-call output must reach that feed; scaffold echoes fail.
 
 ```bash
 python3 scripts/validate_steered_conversation.py --binary /absolute/ponderer --model /absolute/model.gguf --server /absolute/llama-server --device CUDA0 --vectors /absolute/affect_lab --report /tmp/new-conversation-report.json
 ```
 
 Loads with all layers on one GPU, 200k context, unified Q4_1 K/V and flash
-attention. Selects the provider for the session and carries one conversation
+attention by default. `--context-size 128000` explicitly changes only this
+isolated allocation when other GPU workloads prevent the 200k test; reports
+retain the actual settings and do not establish full-window performance.
+The worker's 512/128 prefill batches bound transient compute memory independently
+of that context allocation and are included in the recorded inference settings.
+Selects the provider for the session and carries one conversation
 across neutral, contentment, excitement, combined, negative excitement and back
 to neutral. Every reply must retain two earlier names and finish without hidden
 autonomous repetition. The test also writes one real handoff to its isolated

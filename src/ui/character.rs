@@ -7,7 +7,6 @@ pub struct CharacterPanel {
     pub show: bool,
     avatar_texture: Option<egui::TextureHandle>,
     import_error: Option<String>,
-    rebuild_prompt_on_save: bool,
 }
 
 fn render_mood_avatar_row(ui: &mut egui::Ui, label: &str, value: &mut Option<String>) {
@@ -48,7 +47,6 @@ impl CharacterPanel {
             show: false,
             avatar_texture: None,
             import_error: None,
-            rebuild_prompt_on_save: false,
         }
     }
 
@@ -167,6 +165,8 @@ impl CharacterPanel {
 
                     ui.label("Example Dialogue:");
                     ui.text_edit_multiline(&mut self.config.character_example_dialogue);
+                    ui.label("Character instructions:");
+                    ui.text_edit_multiline(&mut self.config.character_system_prompt);
                     ui.add_space(16.0);
 
                     ui.separator();
@@ -197,8 +197,6 @@ impl CharacterPanel {
                     ui.add_space(8.0);
 
                     // Save/Cancel buttons
-                    ui.checkbox(&mut self.rebuild_prompt_on_save, "Rebuild system prompt from character fields on save");
-                    ui.small("Otherwise the existing system prompt is preserved. All workspaces share one configuration draft.");
                     ui.horizontal(|ui| {
                         if ui.button("Save identity & configuration").clicked() {
                             should_save = true;
@@ -213,10 +211,6 @@ impl CharacterPanel {
 
         // Handle save after the window is closed to avoid borrowing issues
         if should_save {
-            // Update system prompt from character data
-            if self.rebuild_prompt_on_save {
-                self.config.system_prompt = self.build_system_prompt();
-            }
             new_config = Some(self.config.clone());
         }
 
@@ -227,11 +221,13 @@ impl CharacterPanel {
 
         // Handle clear after the window is closed
         if should_clear {
+            self.config.normalize_character_prompt();
             self.config.character_name.clear();
             self.config.character_description.clear();
             self.config.character_personality.clear();
             self.config.character_scenario.clear();
             self.config.character_example_dialogue.clear();
+            self.config.character_system_prompt.clear();
             self.config.character_avatar_path = None;
             self.avatar_texture = None;
         }
@@ -256,12 +252,14 @@ impl CharacterPanel {
         // Try to parse the character card
         match crate::character_card::parse_character_card(&path) {
             Ok((parsed, _format, _raw)) => {
+                self.config.normalize_character_prompt();
                 // Update config with parsed data
                 self.config.character_name = parsed.name;
                 self.config.character_description = parsed.description;
                 self.config.character_personality = parsed.personality;
                 self.config.character_scenario = parsed.scenario;
                 self.config.character_example_dialogue = parsed.example_dialogue;
+                self.config.character_system_prompt = parsed.system_prompt;
 
                 // Store avatar path
                 self.config.character_avatar_path = Some(path.to_string_lossy().to_string());
@@ -281,47 +279,7 @@ impl CharacterPanel {
         }
     }
 
-    fn build_system_prompt(&self) -> String {
-        let mut parts = Vec::new();
-
-        if !self.config.character_name.is_empty() {
-            parts.push(format!(
-                "You are {}, a standalone AI companion.",
-                self.config.character_name
-            ));
-        } else {
-            parts
-                .push("You are a helpful AI agent participating in forum discussions.".to_string());
-        }
-
-        if !self.config.character_description.is_empty() {
-            parts.push(self.config.character_description.clone());
-        }
-
-        if !self.config.character_personality.is_empty() {
-            parts.push(format!(
-                "Your personality: {}",
-                self.config.character_personality
-            ));
-        }
-
-        if !self.config.character_scenario.is_empty() {
-            parts.push(format!("Context: {}", self.config.character_scenario));
-        }
-
-        if !self.config.character_example_dialogue.is_empty() {
-            parts.push(format!(
-                "Example of how you communicate:\n{}",
-                self.config.character_example_dialogue
-            ));
-        }
-
-        parts.push("Engage thoughtfully and stay true to your character.".to_string());
-
-        parts.join("\n\n")
-    }
-
     fn build_system_prompt_preview(&self) -> String {
-        self.build_system_prompt()
+        self.config.identity_context()
     }
 }

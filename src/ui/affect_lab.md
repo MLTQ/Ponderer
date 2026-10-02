@@ -9,6 +9,9 @@ inside Settings / Models, switching between API and local GGUF editors. The embe
 Affect lab workspace has Affect mixer, Example library, Test & evidence and Discover lever panes. Loading
 chains worker initialization to a cancellable weight-allocation job, and session
 provider selection is explicit. All processes remain owned by the desktop UI.
+Session selection requires a successfully loaded native model, not merely a
+running worker. Failed/unfinished loads cannot replace the current provider.
+Detected CUDA selection prefers the separate Q4_1-compatible engine build.
 
 Quiet polls have separate state from action requests; epoch-tagged replies discard
 polls predating mutations. Mix versions preserve slider edits made during requests.

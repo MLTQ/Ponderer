@@ -65,6 +65,8 @@ Models → Model connection**; the **Affect lab** workspace contains experiments
    model judgments, with every raw output and accuracy/format check retained.
 8. In Settings select **Use for this session** to route ordinary
    completions, reflection and streaming tool calls through the local provider.
+   This is available only after the native model loads successfully, not just
+   after the worker starts. A failed load leaves the previous provider selected.
    This selection cancels the current agent turn. It supports text inference.
 9. For conversation choose **Settings → Behavior → Conversation mode → Direct**
    and **Save & apply**. This still permits tools but yields after one compact chat
@@ -88,6 +90,36 @@ general affect/strong-mix quality still need independent studies.
 Run [validate_steered_conversation.py](../scripts/validate_steered_conversation.md)
 to repeat with isolated configuration, database and copied checkpoint-matched
 vectors. It never changes the live operator's chats/settings or sends Telegram.
+
+The final 2026-10-02 Agentic regression enabled ambient cognition throughout and
+passed fourteen conversation turns, twenty-four fixed-seed probes and all twelve
+arithmetic/JSON checks. It used the separate Q4_1-compatible CUDA engine, all layers
+on the RTX 4090, unified Q4_1 K/V, flash attention and an explicitly approved
+128,000-token isolated allocation; live 200k settings were not changed. Every
+non-neutral profile changed fixed behavior output, and reset reproduced all
+neutral probes exactly. Name recall, literal Unicode/placeholder text, one actual
+handoff/resume, role-bearing wire prompts and raw chat/orientation/appraisal/tool
+output over the authenticated WebSocket passed. UI-parent closure reaped the
+complete inference chain. Replies without a profile reload took about 1–8 seconds;
+affect reload replies took 8–17.5 seconds. These short tests do not establish filled
+128k/200k performance, calibrated affect, or subjective experience.
+
+Raw passing evidence is retained locally in ignored
+`affect_lab/conversation-regressions/20261002-agentic-ambient.json`, alongside
+failed runs that exposed empty-memory query loops and allocation failures.
+Two subsequent Direct-mode reruns could not allocate the native compute buffer
+as other GPU memory use increased; final full Direct-mode validation is still a
+follow-up, not a passing result. No unrelated GPU process was stopped.
+
+Private chat now sends the canonical character/behavior system message, separately
+quoted historical context, actual user/assistant history and the final operator
+message verbatim. It does not repeat automatic activity transcripts or append
+harness instructions as the latest user text. The prompt inspector records the
+initial wire bundle (not every later tool exchange). Character-card placeholders
+are case-insensitive and expanded only in card fields; custom operator policy is
+preserved. The Mind raw output feed retains bounded API-visible chat/background
+content, reasoning and tool fragments after completion, separately from the
+surprisal trace; hidden provider tokens/activations are not exposed.
 
 Quiet background polling never disables controls or inserts/removes a spinner.
 Older poll responses cannot overwrite a newer command, and acknowledgments cannot
@@ -161,6 +193,7 @@ The default remains a conservative 16,384-token, F16-cache configuration.
 | Unified KV cache | `--kv-unified` (or explicit `--no-kv-unified`) |
 | K / V cache | `--cache-type-k q4_1 --cache-type-v q4_1` |
 | Flash attention | `--flash-attn on` (`auto` and `off` are also selectable) |
+| Prefill batches (worker defaults) | `--batch-size 512 --ubatch-size 128` |
 
 These flags are described in the [llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
 Context accepts 1,024..1,048,576 tokens, but that UI limit is not a promise about a
@@ -174,6 +207,9 @@ rejected before loading. Quantization reduces cache storage but can affect quali
 Unified KV shares a buffer across sequences; it is not a separate compression
 method. This host uses one inference slot and serializes requests. Disabling
 context shift makes an overfull prompt fail rather than silently dropping history.
+Prefill batch sizes bound transient compute buffers independently of context/KV
+capacity. They are included in evidence signatures and do not reduce the selected
+context, change cache quantization or permit CPU fallback.
 
 Managed loopback GGUF calls have a bounded one-hour request deadline instead of the
 ordinary two minutes, and the proxy accepts request bodies up to 16 MiB. Existing
@@ -190,10 +226,15 @@ diagnostic scan it reported `CUDA0` for the 4090 and `CUDA1` for the 2070 SUPER,
 opposite to their `nvidia-smi` indices. Existing environment visibility overrides
 can change the inventory; always use the engine's names/IDs. No CUDA/LM Studio
 installation or service was changed.
-Use a compatible engine with the required kernels; another build/device may reject
-the same cache type or use slower fallback operations. The CUDA build's cache says
-`GGML_CUDA_FA_ALL_QUANTS=OFF`, so full-window performance of its quantized attention
-path still needs measurement even though the short exact-settings test succeeded.
+The original `build/bin` engine had `GGML_CUDA_FA_ALL_QUANTS=OFF`: its Q4_1
+attention path could fall back to slow CPU work despite GPU weight placement.
+The separate `build-ponderer-q4_1/bin/llama-server` engine enables that option for
+CUDA architectures 75/89. **Use detected CUDA engine** now prefers it. See
+[the reproducible builder](../scripts/build_local_cuda.md); retain the adjacent
+shared libraries. The worker rejects known shared CUDA backends missing Q4_1/Q5
+kernels before loading, without changing context, quantization or offload.
+Unknown/static packages are not certified by that marker check. Full-window
+performance still needs measurement.
 
 Both CPU and RTX 4090 runs loaded the 200k configuration and answered the short
 arithmetic prompt with `42` at neutral and contentment strength 0.25. This verifies

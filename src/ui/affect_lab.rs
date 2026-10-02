@@ -29,6 +29,17 @@ fn gpu_device_label(device: &GpuDevice) -> String {
     };
     format!("{} · {}{}", device.id, device.name, memory)
 }
+
+fn detected_cuda_engine() -> Option<std::path::PathBuf> {
+    let home = dirs::home_dir()?;
+    [
+        "Code/llama.cpp-cuda/build-ponderer-q4_1/bin/llama-server",
+        "Code/llama.cpp-cuda/build/bin/llama-server",
+    ]
+    .iter()
+    .map(|relative| home.join(relative))
+    .find(|path| path.is_file())
+}
 #[derive(Clone, Default)]
 struct ExamplePair {
     prompt: Option<String>,
@@ -89,6 +100,9 @@ impl AffectLabPanel {
             open_settings: false,
             settings: AffectLabStart {
                 model_path,
+                server_binary: detected_cuda_engine()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "llama-server".into()),
                 ..Default::default()
             },
             local_view: false,
@@ -353,6 +367,12 @@ impl AffectLabPanel {
     fn available(&self) -> bool {
         self.pending_action.is_none() && !self.job_running()
     }
+    fn ready_for_session(&self) -> bool {
+        self.running()
+            && self.available()
+            && self.status["native_pid"].is_number()
+            && self.status["applied_profile"].is_object()
+    }
     fn invalidate_gpu_inventory(&mut self) {
         self.gpu_devices.clear();
         self.device_engine = None;
@@ -536,8 +556,8 @@ impl AffectLabPanel {
             {
                 self.invalidate_gpu_inventory();
             }
-            if let Some(cuda) = dirs::home_dir().map(|home| home.join("Code/llama.cpp-cuda/build/bin/llama-server")).filter(|p| p.is_file()) {
-                if ui.small_button("Use detected CUDA engine").clicked() {
+            if let Some(cuda) = detected_cuda_engine() {
+                if ui.small_button("Use detected CUDA engine").on_hover_text(cuda.display().to_string()).clicked() {
                     self.settings.server_binary = cuda.to_string_lossy().into_owned();
                     self.invalidate_gpu_inventory();
                 }
@@ -627,7 +647,7 @@ impl AffectLabPanel {
             }
             if ui
                 .add_enabled(
-                    self.running() && !selected && self.available(),
+                    self.ready_for_session() && !selected,
                     egui::Button::new("Use for this session"),
                 )
                 .clicked()
@@ -1497,6 +1517,17 @@ fn validation_help(ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unloaded_or_failed_engine_is_not_selectable_for_chat() {
+        let mut panel = AffectLabPanel::new();
+        panel.status = json!({"running":true,"native_pid":null,"job":{"phase":"failed"}});
+        assert!(!panel.ready_for_session());
+        panel.status = json!({"running":true,"native_pid":123,"applied_profile":{},"job":{"phase":"complete"}});
+        assert!(panel.ready_for_session());
+        panel.pending_action = Some("load".into());
+        assert!(!panel.ready_for_session());
+    }
     fn inventory(panel: &AffectLabPanel, engine: &str, devices: Value) -> LabReply {
         LabReply {
             epoch: panel.epoch,

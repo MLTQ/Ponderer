@@ -104,6 +104,12 @@ def main():
                 assert state["capabilities"]["automatic_discovery"]
                 assert state["capabilities"]["signed_controls"]
                 assert len(state["test_prompts"]) == 5
+                try:
+                    request(base, "/affect-lab/use-for-agent", {})
+                    raise AssertionError("An unloaded engine was selectable for the session")
+                except HTTPError as error:
+                    assert error.code == 400, error
+                assert request(base, "/config")["llm_model"] == "original-model"
                 request(base, "/affect-lab/load", {})
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:

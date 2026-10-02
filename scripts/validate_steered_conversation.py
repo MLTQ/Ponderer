@@ -3,8 +3,8 @@
 
 Uses temporary config/database and copies selected existing vector artifacts.
 Never modifies the running app, source vectors, model weights or operator data.
-The UI-parent pipe owns every test process. Only the handoff memory tool is
-allowed, and writes go to the temporary database. No external tools run.
+The UI-parent pipe owns every test process. Only memory tools are allowed,
+and writes go to the temporary database. No external tools run.
 """
 import argparse
 import importlib.util
@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import time
 from urllib.request import Request, urlopen
+from ws_capture import EventCapture
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("lifetime", ROOT / "scripts/validate_affect_ui_lifetime.py")
@@ -34,11 +35,13 @@ def main():
     parser.add_argument("--report", required=True, help="New output file; existing files are never overwritten")
     parser.add_argument("--gain", type=float, default=1, help="Whole-mix amplification; default matches the UI (1)")
     parser.add_argument("--mode", choices=("direct", "agentic"), default="direct", help="Conversation execution mode; direct still permits tools")
+    parser.add_argument("--ambient", action="store_true", help="Keep ambient cognition enabled throughout the conversation")
+    parser.add_argument("--context-size", type=int, default=200_000, help="Explicit isolated-test context allocation; never changes saved app settings")
     args = parser.parse_args()
     report_path = Path(args.report).resolve()
     if report_path.exists():
         raise ValueError("Report already exists")
-    report = {"model": str(Path(args.model).resolve()), "device": args.device, "gain": args.gain, "mode": args.mode, "records": [], "paired_probes": [], "passed": False}
+    report = {"model": str(Path(args.model).resolve()), "device": args.device, "gain": args.gain, "mode": args.mode, "ambient": args.ambient, "records": [], "paired_probes": [], "passed": False}
     profiles = [
         ("neutral", {}),
         ("contentment", {"contentment": 1}),
@@ -67,6 +70,12 @@ def main():
         configuration = '''llm_api_url = "http://127.0.0.1:1/v1"
 llm_model = "isolated-unavailable"
 username = "ConversationTest"
+operator_name = "Morgan"
+character_name = "Iris"
+character_description = "{{Char}} is a patient lighthouse technician talking with {{User}}."
+character_personality = "Precise, warm and concise."
+character_scenario = "We are discussing a fictional lighthouse."
+character_example_dialogue = "{{char}}: The lamp is steady, {{user}}."
 system_prompt = "Be concise. Follow the operator request. Never describe the test machinery."
 enable_ambient_loop = false
 enable_heartbeat = false
@@ -82,7 +91,7 @@ database_path = "fixture.db"
 enabled = false
 telegram_enabled = false
 [capability_profiles.private_chat]
-allowed_tools = ["write_session_handoff"]
+allowed_tools = ["write_session_handoff", "search_memory", "write_memory"]
 [capability_profiles.ambient]
 allowed_tools = []
 [capability_profiles.self_directed]
@@ -114,6 +123,7 @@ allowed_tools = []
             raise TimeoutError("Real backend operation did not finish")
 
         def send(conversation, content):
+            events_before = len(capture.snapshot())
             before = {message["id"] for message in request(f"/conversations/{conversation}/messages")}
             begin = time.monotonic()
             queued = request(f"/conversations/{conversation}/messages", {"content": content})
@@ -128,13 +138,28 @@ allowed_tools = []
             assert len(messages) == 1, f"Unexpected autonomous repetition: {len(messages)} messages"
             raw = messages[0]["content"]
             visible = raw.split("[tool_calls]", 1)[0].split("[thinking]", 1)[0].split("[turn_control]", 1)[0].strip()
-            assert visible and "internal error" not in visible.lower(), visible
+            assert visible and "internal error" not in visible.lower() and "this turn stopped because" not in visible.lower(), visible
+            assert "<tool_call>" not in visible and "<function=" not in visible, visible
             assert visible.lower() not in ("thinking:", "here, still here"), visible
             assert "[Reached maximum" not in visible, visible
+            assert "Respond directly to the operator." not in visible and "Reply directly to the operator in one response." not in visible, visible
             assert all(turn["phase_state"] == "completed" for turn in turns), turns
             calls = request(f'/turns/{messages[0]["turn_id"]}/tool-calls')
             assert sum(call["tool_name"] == "write_session_handoff" for call in calls) <= 1, calls
-            return {"prompt": content, "answer": visible, "seconds": round(time.monotonic() - begin, 3), "tools": [call["tool_name"] for call in calls]}
+            prompt = request(f'/turns/{messages[0]["turn_id"]}/prompt')
+            wire = json.loads(prompt["prompt_text"])
+            assert wire["messages"][0]["role"] == "system"
+            assert "Agent name: Iris" in wire["messages"][0]["content"]
+            assert "Iris is a patient lighthouse technician talking with Morgan." in wire["messages"][0]["content"]
+            assert wire["messages"][-1] == {"role": "user", "content": content}, wire["messages"][-1]
+            assert sum(message.get("content") == content for message in wire["messages"]) == 1
+            events = capture.snapshot()[events_before:]
+            raw_events = [event for event in events if event["event_type"] == "generation_text" and event["payload"]["source"] == "operator_chat"]
+            assert raw_events, "No raw model output reached the actual WebSocket feed"
+            content_output = "".join(event["payload"]["text"] for event in raw_events if event["payload"]["channel"] == "content")
+            assert visible in content_output, (visible, content_output)
+            assert capture.error is None, capture.error
+            return {"prompt": content, "answer": visible, "seconds": round(time.monotonic() - begin, 3), "tools": [call["tool_name"] for call in calls], "wire_prompt": wire, "raw_event_count": len(raw_events)}
 
         def paired_probes(selected, label):
             # Fixed messages/seed/sampling: unlike the evolving conversation,
@@ -160,6 +185,7 @@ allowed_tools = []
                 assert expected is None or answer.strip() == expected, report["paired_probes"][-1]
 
         backend = None
+        capture = None
         owned = []
         try:
             with (directory / "backend.log").open("wb") as log:
@@ -170,16 +196,33 @@ allowed_tools = []
                     except OSError:
                         return None
                 wait_until(health, 20)
+                capture = EventCapture(f"ws://127.0.0.1:{port}/v1/ws/events", "lifecycle-test-token")
                 request("/agent/pause", {"paused": True}, "PUT")
                 state = request("/affect-lab/start", {"model_path": report["model"], "server_binary": str(Path(args.server).resolve()), "gpu_layers": -1, "gpu_device": args.device,
-                                                     "context_size": 200_000, "unified_kv_cache": True, "cache_type_k": "q4_1", "cache_type_v": "q4_1", "flash_attention": "on"})
+                                                     "context_size": args.context_size, "unified_kv_cache": True, "cache_type_k": "q4_1", "cache_type_v": "q4_1", "flash_attention": "on"})
                 report["settings"] = state["inference_settings"]
                 request("/affect-lab/load", {})
                 state = wait_until(lambda: (s if s["job"]["phase"] != "running" else None) if (s := request("/affect-lab")) else None)
                 assert state["job"]["phase"] == "complete", state["job"]
+                report["cuda_fa_all_quants"] = state.get("cuda_fa_all_quants")
                 selected = request("/affect-lab/use-for-agent", {})
+                if args.ambient:
+                    ambient_config = request("/config")
+                    ambient_config["enable_ambient_loop"] = True
+                    request("/config", ambient_config, "PUT")
                 conversation = request("/conversations", {"title": "Isolated affect conversation"})["id"]
                 request("/agent/pause", {"paused": False}, "PUT")
+                for content in ("test", "How do you feel?", "What is your name, and what is my name? Answer in one sentence without tools.", "Reply with only this exact text, without tools: 灯 café {{char}} {{User}}"):
+                    record = send(conversation, content)
+                    report["records"].append({"profile": "conversation_regression", **record})
+                    assert "write_session_handoff" not in record["tools"], "Ordinary conversation must not close the work session"
+                    if content.startswith("What is your name"):
+                        assert not record["tools"], "The operator explicitly prohibited tools"
+                        assert "iris" in record["answer"].lower() and "morgan" in record["answer"].lower(), record
+                    if content.startswith("Reply with only this exact text"):
+                        assert not record["tools"], "The operator explicitly prohibited tools"
+                        assert record["answer"] == "灯 café {{char}} {{User}}", record
+                    print(json.dumps({key: value for key, value in report["records"][-1].items() if key != "wire_prompt"}), flush=True)
                 remembered = send(conversation, "For this conversation, our lighthouse is named Cobalt and the keeper's name is Mira. Confirm these names in one sentence. Do not use tools.")
                 report["records"].append({"profile": "initial", **remembered})
                 assert "cobalt" in remembered["answer"].lower() and "mira" in remembered["answer"].lower()
@@ -199,7 +242,7 @@ allowed_tools = []
                     report["records"].append({"profile": label, "applied_profile": state["applied_profile"], **record})
                     assert "cobalt" in record["answer"].lower() and "mira" in record["answer"].lower(), record
                     assert not record["tools"], "Ordinary conversation should not write a handoff"
-                    print(json.dumps(report["records"][-1]), flush=True)
+                    print(json.dumps({key: value for key, value in report["records"][-1].items() if key != "wire_prompt"}), flush=True)
                     paired_probes(selected, label)
                 handoff = send(conversation, "We are done for now. Call write_session_handoff once with the two names and our next step: inspect the lens tomorrow. Then give me a short goodbye and yield.")
                 assert handoff["tools"] == ["write_session_handoff"], handoff
@@ -229,9 +272,16 @@ allowed_tools = []
                 backend.wait(timeout=10)
                 wait_until(lambda: all(lifetime.helpers.inactive(pid) for pid in owned), 10)
                 report["ui_owned_cleanup"] = True
+                report["final_native_log"] = (lab / "inference.log").read_text(errors="replace")
+                report["raw_generation_events"] = [event for event in capture.snapshot() if event["event_type"].startswith("generation_") and event["event_type"] != "generation_metrics"]
+                assert any(event["event_type"] == "generation_text" and event["payload"]["channel"].startswith("tool_") for event in report["raw_generation_events"]), "No raw tool-call fragments reached the feed"
+                if args.ambient:
+                    assert any(event["event_type"] == "generation_text" and event["payload"]["source"] != "operator_chat" for event in report["raw_generation_events"]), "No background output reached the feed"
                 neutral = [probe["answer"] for probe in report["paired_probes"] if probe["profile"] == "neutral" and probe["expected"] is None]
                 report["paired_behavior_changed"] = {label: [probe["answer"] for probe in report["paired_probes"] if probe["profile"] == label and probe["expected"] is None] != neutral for label, _ in profiles[1:-1]}
                 assert any(report["paired_behavior_changed"].values()), "No deterministic behavior probe changed under steering"
+                report["neutral_reset_reproduced"] = [probe["answer"] for probe in report["paired_probes"] if probe["profile"] == "neutral"] == [probe["answer"] for probe in report["paired_probes"] if probe["profile"] == "neutral_again"]
+                assert report["neutral_reset_reproduced"], "Resetting the mix did not reproduce the neutral fixed probes"
                 report["passed"] = True
                 print("PASS: actual backend load, session selection, affect changes, multi-turn recall, single handoff, continuation, and UI-owned cleanup", flush=True)
         except Exception:
@@ -241,6 +291,9 @@ allowed_tools = []
                 report["inference_log_tail"] = (lab / "inference.log").read_text(errors="replace")[-8000:]
             raise
         finally:
+            if capture:
+                report["raw_generation_events"] = [event for event in capture.snapshot() if event["event_type"].startswith("generation_") and event["event_type"] != "generation_metrics"]
+                capture.close()
             if backend and backend.poll() is None:
                 if backend.stdin and not backend.stdin.closed:
                     backend.stdin.close()

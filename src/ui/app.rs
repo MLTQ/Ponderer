@@ -67,8 +67,8 @@ pub struct AgentApp {
     last_action: Option<String>,
     /// Last journal entry summary.
     last_journal: Option<String>,
-    /// Latest live LLM token stream content (any conversation, any cycle).
-    live_stream_text: Option<String>,
+    /// Bounded raw provider output across chat and background generations.
+    raw_feed: super::raw_feed::RawFeed,
     /// Rolling live token-novelty monitor rendered in the Mind panel.
     token_monitor: TokenMonitorState,
     /// Timestamp when the current visual state was entered (from AgentRuntimeStatus).
@@ -218,7 +218,7 @@ impl AgentApp {
             last_orientation: None,
             last_action: None,
             last_journal: None,
-            live_stream_text: None,
+            raw_feed: super::raw_feed::RawFeed::default(),
             token_monitor: TokenMonitorState::new(),
             visual_state_since: None,
             current_activity: None,
@@ -721,16 +721,13 @@ impl eframe::App for AgentApp {
                     content,
                     done,
                 } => {
-                    // Capture global live stream regardless of which conversation is active.
                     if *done {
-                        self.live_stream_text = None;
                         // Revert Writing back to Thinking so the backend StateChanged that
                         // follows can take over normally.
                         if matches!(self.current_state, AgentVisualState::Writing) {
                             self.current_state = AgentVisualState::Thinking;
                         }
                     } else if !content.trim().is_empty() {
-                        self.live_stream_text = Some(content.clone());
                         // Show Writing while tokens are actively streaming to the user.
                         if matches!(self.current_state, AgentVisualState::Thinking) {
                             self.current_state = AgentVisualState::Writing;
@@ -745,10 +742,28 @@ impl eframe::App for AgentApp {
                     source,
                     conversation_id,
                 } => {
+                    self.raw_feed
+                        .start(generation_id, source, conversation_id.as_deref());
                     self.token_monitor.generation_started(
                         generation_id,
                         source,
                         conversation_id.as_deref(),
+                    );
+                    continue;
+                }
+                FrontendEvent::GenerationText {
+                    generation_id,
+                    source,
+                    conversation_id,
+                    channel,
+                    text,
+                } => {
+                    self.raw_feed.push(
+                        generation_id,
+                        source,
+                        conversation_id.as_deref(),
+                        channel,
+                        text,
                     );
                     continue;
                 }
@@ -772,6 +787,12 @@ impl eframe::App for AgentApp {
                     conversation_id,
                     outcome,
                 } => {
+                    self.raw_feed.finish(
+                        generation_id,
+                        source,
+                        conversation_id.as_deref(),
+                        outcome,
+                    );
                     self.token_monitor.generation_finished(
                         generation_id,
                         source,
@@ -1193,15 +1214,6 @@ fn wrap_text_for_ui_width(input: &str, width: f32) -> String {
     }
 
     out
-}
-
-fn last_n_chars(text: &str, n: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= n {
-        text.to_string()
-    } else {
-        chars[chars.len() - n..].iter().collect()
-    }
 }
 
 fn parse_subtask_id(output: &str) -> Option<String> {

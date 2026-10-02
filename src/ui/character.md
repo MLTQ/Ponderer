@@ -26,18 +26,15 @@ Implements the embedded Identity workspace: agent/operator names, relationship, 
   - **Mood Avatars (UI States)**: Editable per-state paths (`avatar_idle`, `avatar_thinking`, `avatar_active`) with browse/clear controls
   - **System Prompt Preview**: Collapsible preview of the assembled prompt
   - **Action buttons**: Save identity & configuration, Clear Character
-- Returns `Some(config)` on save. The existing system prompt is preserved unless the operator explicitly checks “Rebuild system prompt from character fields on save.” Settings' Revert drafts also restores the shared identity draft.
+- Returns `Some(config)` on save without overwriting the operator's custom system prompt. Character fields always participate in the backend identity compiler; no rebuild checkbox is needed. Exact old UI-generated prompts are normalized before character import/clear so an old persona cannot survive a character change. Settings' Revert drafts also restores the shared identity draft.
 - **Interacts with**: `rfd::FileDialog`, `image` crate for avatar display, `egui::Context::input` for drag-and-drop
 
 ### `CharacterPanel::import_character_card(path)`
-- **Does**: Parses a PNG character card via `crate::character_card::parse_character_card`, populates config fields (name, description, personality, scenario, example_dialogue, avatar_path), clears cached texture
+- **Does**: Parses a PNG character card via `crate::character_card::parse_character_card`, populates config fields (name, description, personality, scenario, example_dialogue, character_system_prompt, avatar_path), clears cached texture. Card system/post-history instructions are character guidance, not overrides to host permissions.
 - **Interacts with**: `crate::character_card::parse_character_card`
 
-### `CharacterPanel::build_system_prompt() -> String`
-- **Does**: Assembles a system prompt string from character fields, joining non-empty sections with double newlines. Falls back to a generic prompt if name is empty.
-
 ### `CharacterPanel::build_system_prompt_preview() -> String`
-- **Does**: Delegates to `build_system_prompt` (exists to separate borrow from render closure)
+- **Does**: Uses the same `AgentConfig::identity_context` compiler as all model requests, including character/operator placeholder substitution. The current operator message is never template-expanded.
 
 ## Contracts
 
