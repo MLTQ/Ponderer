@@ -17,3 +17,7 @@ python3 scripts/validate_local_chat.py --model /absolute/model.gguf --server /ab
 
 `--context` explicitly changes the test-only context (default 200000). This is a
 short protocol regression, not a filled-context benchmark or affect calibration.
+
+On Apple Silicon, exercise the desktop defaults with `--device MTL0
+--context 16384 --cache-type f16 --flash-attn auto` (one command line). The optional
+cache/attention flags preserve the previous Q4_1/on defaults for CUDA regressions.

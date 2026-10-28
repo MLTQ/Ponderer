@@ -12,6 +12,9 @@ provider selection is explicit. All processes remain owned by the desktop UI.
 Session selection requires a successfully loaded native model, not merely a
 running worker. Failed/unfinished loads cannot replace the current provider.
 Detected CUDA selection prefers the separate Q4_1-compatible engine build.
+On macOS the default and detected-engine button prefer the locally built Metal
+engine under the affect data directory, then Homebrew executable paths. The UI
+explains Apple Silicon shared memory and links the Metal build instructions.
 
 Quiet polls have separate state from action requests; epoch-tagged replies discard
 polls predating mutations. Mix versions preserve slider edits made during requests.

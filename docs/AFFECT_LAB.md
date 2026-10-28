@@ -136,8 +136,9 @@ of the model. Neutral/reset selects zero steering for subsequent requests.
 **Stop local model** restores the prior URL, key, model and reflection/
 decision overrides. Ephemeral URLs and tokens are not saved into ordinary settings.
 Closing the owning UI terminates the backend, worker, native supervisors and model
-or extraction process groups. This feature currently requires Linux and the UI's
-backend parent pipe. An externally launched backend cannot start it.
+or extraction process groups. This feature supports macOS and Linux and requires the UI's
+backend parent pipe. Portable parent watchers supervise workers and native process
+groups; Linux additionally uses parent-death signals. An externally launched backend cannot start it.
 
 ## Dependencies and artifacts
 
@@ -383,7 +384,7 @@ python3 ponderer_backend/resources/affect_lab/worker.py study --model /path/to/m
 
 The command-line experiments stop their model processes when finished. The desktop
 supervisor embeds these same sources, so deployed binaries need no checkout to run
-the lab. Serve mode requires a private token and the UI's Linux parent-pipe marker.
+the lab. Serve mode requires a private token and the UI's macOS/Linux parent-pipe marker and expected backend PID.
 
 ## Verification
 

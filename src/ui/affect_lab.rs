@@ -40,6 +40,22 @@ fn detected_cuda_engine() -> Option<std::path::PathBuf> {
     .map(|relative| home.join(relative))
     .find(|path| path.is_file())
 }
+
+fn detected_local_engine() -> Option<std::path::PathBuf> {
+    if cfg!(target_os = "macos") {
+        let local = ponderer_backend::affect_lab::AffectLabManager::default_data_dir()
+            .join("llama.cpp/build/bin/llama-server");
+        [
+            local,
+            std::path::PathBuf::from("/opt/homebrew/bin/llama-server"),
+            std::path::PathBuf::from("/usr/local/bin/llama-server"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+    } else {
+        detected_cuda_engine()
+    }
+}
 #[derive(Clone, Default)]
 struct ExamplePair {
     prompt: Option<String>,
@@ -100,7 +116,7 @@ impl AffectLabPanel {
             open_settings: false,
             settings: AffectLabStart {
                 model_path,
-                server_binary: detected_cuda_engine()
+                server_binary: detected_local_engine()
                     .map(|path| path.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "llama-server".into()),
                 ..Default::default()
@@ -556,11 +572,15 @@ impl AffectLabPanel {
             {
                 self.invalidate_gpu_inventory();
             }
-            if let Some(cuda) = detected_cuda_engine() {
-                if ui.small_button("Use detected CUDA engine").on_hover_text(cuda.display().to_string()).clicked() {
-                    self.settings.server_binary = cuda.to_string_lossy().into_owned();
+            if let Some(engine) = detected_local_engine() {
+                let label = if cfg!(target_os = "macos") { "Use detected Metal engine" } else { "Use detected CUDA engine" };
+                if ui.small_button(label).on_hover_text(engine.display().to_string()).clicked() {
+                    self.settings.server_binary = engine.to_string_lossy().into_owned();
                     self.invalidate_gpu_inventory();
                 }
+            }
+            if cfg!(target_os = "macos") {
+                ui.small("Apple Silicon uses Metal and shared system memory. Select the Apple GPU after scanning. If no engine is detected, see scripts/build_local_metal.md.");
             }
             ui.horizontal_wrapped(|ui| {
                 ui.label("Inference GPU");

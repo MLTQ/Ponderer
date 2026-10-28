@@ -26,11 +26,13 @@ def main():
     parser.add_argument("--server", required=True)
     parser.add_argument("--device", required=True)
     parser.add_argument("--context", type=int, default=200_000)
+    parser.add_argument("--cache-type", choices=worker.CACHE_TYPES, default="q4_1")
+    parser.add_argument("--flash-attn", choices=("auto", "on", "off"), default="on")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="ponderer-local-chat-") as temporary:
         lab = worker.AffectLab(args.model, temporary, server_binary=args.server, gpu_layers=-1,
                                gpu_device=args.device, context_size=args.context,
-                               cache_type_k="q4_1", cache_type_v="q4_1", flash_attention="on")
+                               cache_type_k=args.cache_type, cache_type_v=args.cache_type, flash_attention=args.flash_attn)
         proxy = None
         started = time.monotonic()
         try:
@@ -91,7 +93,7 @@ def main():
                 proxy.shutdown()
                 proxy.server_close()
             lab.close()
-        print("PASS: real all-GPU Qwen chat, structured tool call, tool-result follow-up, streaming with tools, and owned cleanup", flush=True)
+        print("PASS: real all-GPU GGUF chat, structured tool call, tool-result follow-up, streaming with tools, and owned cleanup", flush=True)
 
 
 if __name__ == "__main__":

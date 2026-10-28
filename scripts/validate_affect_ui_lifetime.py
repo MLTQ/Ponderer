@@ -34,15 +34,19 @@ def request(base, path, value=None, method=None):
 
 
 def descendants(pid):
-    result = []
-    try:
-        children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
-    except (FileNotFoundError, ProcessLookupError):
+    # ps is available on macOS and Linux; /proc alone silently misses Mac children.
+    rows = subprocess.check_output(["ps", "-axo", "pid=,ppid="], text=True).splitlines()
+    children = {}
+    for row in rows:
+        child, parent = map(int, row.split())
+        children.setdefault(parent, []).append(child)
+    def walk(parent):
+        result = []
+        for child in children.get(parent, []):
+            result.append(child)
+            result.extend(walk(child))
         return result
-    for child in map(int, children):
-        result.append(child)
-        result.extend(descendants(child))
-    return result
+    return walk(pid)
 
 
 def main():
@@ -50,7 +54,7 @@ def main():
     if not binary.is_file():
         raise ValueError("Build the desktop executable first")
     with tempfile.TemporaryDirectory(prefix="ponderer-affect-lifetime-") as temporary:
-        directory = Path(temporary) / "isolated"
+        directory = Path(temporary).resolve() / "isolated"
         directory.mkdir()
         executable = directory / "ponderer"
         shutil.copy2(binary, executable)

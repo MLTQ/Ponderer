@@ -16,3 +16,7 @@ pipe closure terminating an active study and every inference descendant.
 Run: `python3 scripts/validate_affect_ui_lifetime.py /absolute/path/to/ponderer`.
 Requires local socket/process access. Cleanup targets only the verified fixture
 processes created by this run.
+
+Process-tree enumeration uses `ps` on macOS and Linux. The fixture helper checks
+macOS process state with `ps` rather than treating absent `/proc` as proof of death.
+The test runs unchanged on Apple Silicon with a fake inference engine.

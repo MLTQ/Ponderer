@@ -26,6 +26,14 @@ that device by default; partial GPU/CPU offload is an advanced, explicit choice.
 Insufficient VRAM fails visibly without silently shrinking context or falling
 back to CPU. The 200k/Q4_1 preset preserves your GPU selection.
 
+On an Apple Silicon Mac, use a recent **Metal** build of llama-server. Follow
+[the Metal build instructions](scripts/build_local_metal.md); Ponderer detects
+that local build or a Homebrew installation automatically. Scan GPUs, select the
+Apple **MTL0** device, load the GGUF, then choose **Use for this session**.
+Apple GPUs use shared system memory. Start with the default 16k context; the 200k
+preset requires considerably more memory. Managed GPU scans, inference and
+shutdown work on both macOS and Linux. MLX loading is deferred.
+
 For isolated native visual QA (synthetic data; no backend/model/config writes):
 
 ```bash
