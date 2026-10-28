@@ -7,8 +7,11 @@ actual job errors remain visible. GPU device labels use dot-separated data field
 Shared asynchronous model/experiment controller. Model connection controls render
 inside Settings / Models, switching between API and local GGUF editors. The embedded
 Affect lab workspace has Affect mixer, Example library, Test & evidence and Discover lever panes. Loading
-chains worker initialization to a cancellable weight-allocation job, and session
-provider selection is explicit. All processes remain owned by the desktop UI.
+chains worker initialization to a cancellable weight-allocation job and automatically
+selects the model for chat after successful loading. There is no separate activation
+button. Retry follows the same flow; failure/cancellation preserves the prior provider.
+Pending activation keeps polling after leaving Settings and blocks configuration
+saves until activation resolves. Stale replies cannot trigger activation. All processes remain owned by the desktop UI.
 Session selection requires a successfully loaded native model, not merely a
 running worker. Failed/unfinished loads cannot replace the current provider.
 Detected CUDA selection prefers the separate Q4_1-compatible engine build.

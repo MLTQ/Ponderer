@@ -26,10 +26,15 @@ that device by default; partial GPU/CPU offload is an advanced, explicit choice.
 Insufficient VRAM fails visibly without silently shrinking context or falling
 back to CPU. The 200k/Q4_1 preset preserves your GPU selection.
 
+After pulling an update, close Ponderer and launch with `cargo run --release`
+to rebuild the release executable and its embedded backend. Running an existing
+`target/release/ponderer` directly does not rebuild it.
+
 On an Apple Silicon Mac, use a recent **Metal** build of llama-server. Follow
 [the Metal build instructions](scripts/build_local_metal.md); Ponderer detects
 that local build or a Homebrew installation automatically. Scan GPUs, select the
-Apple **MTL0** device, load the GGUF, then choose **Use for this session**.
+Apple **MTL0** device, then **Load local model**. Chat switches to it automatically
+after loading succeeds.
 Apple GPUs use shared system memory. Start with the default 16k context; the 200k
 preset requires considerably more memory. Managed GPU scans, inference and
 shutdown work on both macOS and Linux. MLX loading is deferred.
@@ -55,7 +60,7 @@ native vector list. Bare thinking labels and unparsed tool calls fail visibly.
 For interactive local chat, choose **Settings → Behavior → Conversation mode →
 Direct**, then **Save & apply**. Direct still supports tools, but avoids autonomous
 task continuations and the larger task-context prompt; ambient cognition is a
-separate setting. Load/select the local provider in Models, adjust built sliders
+separate setting. Load the local model in Models, adjust built sliders
 in Affect lab, wait for the mix acknowledgment, then continue in Conversation.
 The next request uses the new mix; engine reloads reset caches, not the conversation.
 Session handoffs finish with one final reply, and repeated unchanged tool work is

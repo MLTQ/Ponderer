@@ -63,11 +63,11 @@ Models → Model connection**; the **Affect lab** workspace contains experiments
    two seeds. Conditions include neutral, each signed control, a positive mixture,
    an opposed-sign mixture and a three-way mixture. Scores are anonymous neutral
    model judgments, with every raw output and accuracy/format check retained.
-8. In Settings select **Use for this session** to route ordinary
-   completions, reflection and streaming tool calls through the local provider.
-   This is available only after the native model loads successfully, not just
-   after the worker starts. A failed load leaves the previous provider selected.
-   This selection cancels the current agent turn. It supports text inference.
+8. **Load local model** automatically routes ordinary completions, reflection
+   and streaming tool calls through the local provider once loading succeeds.
+   A failed or cancelled load leaves the previous provider selected. There is no
+   separate activation step. Switching cancels the current agent turn and applies
+   for the current desktop session. It supports text inference.
 9. For conversation choose **Settings → Behavior → Conversation mode → Direct**
    and **Save & apply**. This still permits tools but yields after one compact chat
    pass; Agentic retains richer task-context/continuation behavior. Neither option

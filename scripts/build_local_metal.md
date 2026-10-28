@@ -21,8 +21,9 @@ Keep the shared libraries beside the resulting `bin/llama-server`.
 Settings → Models detects `affect_lab/llama.cpp/build/bin/llama-server` (under
 `PONDERER_AFFECT_DATA_DIR` if set), then Homebrew's `/opt/homebrew/bin/llama-server`
 or `/usr/local/bin/llama-server`. Custom executable paths remain editable.
-Click **Scan GPUs**, select the Apple **MTL0** device, then **Load local model**
-and **Use for this session**. Metal uses shared system memory; start with the
+Click **Scan GPUs**, select the Apple **MTL0** device, then **Load local model**.
+Chat switches automatically after loading succeeds. Metal uses shared system
+memory; start with the
 default 16,384-token context. The 200k preset is an explicit large allocation.
 
 The desktop owns the backend, worker, supervisor and model. Closing it stops all

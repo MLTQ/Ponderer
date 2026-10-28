@@ -5,6 +5,10 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+#[path = "affect_lab_load_tests.rs"]
+mod load_tests;
+
 enum LabResult {
     Status(Value),
     Devices(Value),
@@ -74,6 +78,7 @@ pub struct AffectLabPanel {
     reply_tx: flume::Sender<LabReply>,
     reply_rx: flume::Receiver<LabReply>,
     pending_action: Option<String>,
+    activate_after_load: bool,
     poll_pending: bool,
     epoch: u64,
     last_poll: Instant,
@@ -128,6 +133,7 @@ impl AffectLabPanel {
             reply_tx,
             reply_rx,
             pending_action: None,
+            activate_after_load: false,
             poll_pending: false,
             epoch: 0,
             last_poll: Instant::now() - Duration::from_secs(2),
@@ -172,6 +178,11 @@ impl AffectLabPanel {
         let poll = action == "status";
         if (poll && self.poll_pending) || (!poll && self.pending_action.is_some()) {
             return;
+        }
+        match action {
+            "start" | "load" => self.activate_after_load = true,
+            "stop" | "cancel" | "use-for-agent" => self.activate_after_load = false,
+            _ => {}
         }
         if poll {
             self.poll_pending = true;
@@ -278,6 +289,12 @@ impl AffectLabPanel {
                 self.review_notes = report["review"]["notes"].as_str().unwrap_or("").into();
             }
         }
+        if value["used_by_agent"].as_bool() == Some(true)
+            || value["running"].as_bool() == Some(false)
+            || matches!(value["job"]["phase"].as_str(), Some("failed" | "cancelled"))
+        {
+            self.activate_after_load = false;
+        }
         self.status = value;
     }
 
@@ -322,6 +339,10 @@ impl AffectLabPanel {
                 self.accept_status(value);
             }
             Ok(LabResult::Provider(config)) => {
+                self.activate_after_load = false;
+                if reply.action == "use-for-agent" {
+                    self.status["used_by_agent"] = json!(true);
+                }
                 if reply.action == "stop" {
                     self.dirty = false;
                     self.strengths.clear();
@@ -334,6 +355,9 @@ impl AffectLabPanel {
                 if reply.poll {
                     self.poll_error = Some(error);
                 } else {
+                    if matches!(reply.action.as_str(), "start" | "load" | "use-for-agent") {
+                        self.activate_after_load = false;
+                    }
                     if reply.action == "profile" {
                         self.failed_mix = Some(reply.mix_version);
                     }
@@ -356,10 +380,13 @@ impl AffectLabPanel {
                 provider = Some(c);
             }
         }
+        if self.activate_after_load && self.ready_for_session() {
+            self.request(client, runtime, "use-for-agent", json!({}));
+        }
         if self.mix_due() {
             self.request(client, runtime, "profile", self.profile());
         }
-        if (self.show || settings_visible)
+        if (self.show || settings_visible || self.activate_after_load)
             && self.pending_action.is_none()
             && !self.poll_pending
             && self.last_poll.elapsed() >= Duration::from_secs(1)
@@ -410,10 +437,11 @@ impl AffectLabPanel {
             .unwrap_or_else(|| "Choose a GPU after scanning".into())
     }
     pub fn provider_change_pending(&self) -> bool {
-        matches!(
-            self.pending_action.as_deref(),
-            Some("stop" | "use-for-agent")
-        )
+        self.activate_after_load
+            || matches!(
+                self.pending_action.as_deref(),
+                Some("stop" | "use-for-agent")
+            )
     }
     fn total(&self) -> f64 {
         self.strengths.values().map(|s| s.abs()).sum()
@@ -658,21 +686,15 @@ impl AffectLabPanel {
             }
             if ui
                 .add_enabled(
-                    self.running() && self.available() && !self.status["native_pid"].is_number(),
+                    self.running()
+                        && self.available()
+                        && (!self.status["native_pid"].is_number()
+                            || (!selected && !self.activate_after_load)),
                     egui::Button::new("Retry loading"),
                 )
                 .clicked()
             {
                 self.request(client, runtime, "load", json!({}));
-            }
-            if ui
-                .add_enabled(
-                    self.ready_for_session() && !selected,
-                    egui::Button::new("Use for this session"),
-                )
-                .clicked()
-            {
-                self.request(client, runtime, "use-for-agent", json!({}));
             }
             if ui
                 .add_enabled(
@@ -717,7 +739,7 @@ impl AffectLabPanel {
             }
         }
         self.activity(ui, client, runtime);
-        ui.small("Local options are session-only; Save & Apply does not load weights. All managed processes stop with this UI. Other model overrides are restored on Stop.");
+        ui.small("Loading connects chat to this model for the current session. Stop restores the previous connection. All managed processes stop with this UI.");
     }
 
     pub fn render_contents(
