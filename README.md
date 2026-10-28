@@ -181,6 +181,13 @@ operator decision until a genuine sandbox adapter exists.
 
 ### Install a Plugin
 
+Vizier provides `vz` for local system orientation and `vz_ssh` for SSH hosts.
+Install the enabled package with
+`python3 plugins/vizier-orb/scripts/install_to_ponderer.py target/release/plugins`
+(use `target/debug/plugins` for debug builds). See the
+[Vizier guide](plugins/vizier-orb/README.md) for executable discovery and remote
+setup. The model receives orientation guidance whenever the plugin is enabled.
+
 1. Put a trusted package directly under the active `plugins/` directory.
 2. Install its runtime dependencies using the package's installer.
 3. Open its generated settings tab, review settings/authority, enable it, and

@@ -1,0 +1,18 @@
+manifest_version = 1
+protocol_version = 1
+id = "vizier-orb"
+name = "Vizier"
+version = "0.1.0"
+description = "System orientation with vz, locally and on SSH hosts."
+plugin_type = "runtime_process"
+command = ["python3", "-u", "scripts/run_plugin.py"]
+requested_capabilities = ["filesystem.read", "process.execute", "network.read"]
+tool_contract_file = "tools.json"
+settings_schema_file = "settings.schema.json"
+settings_tab_title = "Vizier"
+settings_tab_order = 200
+
+[contributions]
+event_hooks = []
+prompt_slots = ["engaged.instructions", "ambient.instructions", "orientation.context"]
+poll_events = false

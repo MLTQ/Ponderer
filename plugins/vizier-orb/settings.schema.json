@@ -1,0 +1,18 @@
+{
+  "fields": [
+    {
+      "key": "enabled",
+      "title": "Enabled",
+      "kind": "boolean",
+      "help": "Expose Vizier system tools and orientation guidance to the model.",
+      "default_value": true
+    },
+    {
+      "key": "vz_path",
+      "title": "Vizier executable",
+      "kind": "text",
+      "help": "Optional local vz executable. Blank searches PATH, ~/.local/bin, ~/.cargo/bin, Homebrew, and ~/Code/vizier builds.",
+      "default_value": ""
+    }
+  ]
+}
